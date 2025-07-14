@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Organic Reaction Map</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden; 
+        }
+        #map-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px; /* Increased size for more nodes */
+            height: 650px; /* Increased size for more nodes */
+            margin: auto;
+        }
+        .node {
+            position: absolute;
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-weight: 600;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+            user-select: none;
+            flex-direction: column;
+            padding: 4px;
+            font-size: 12px;
+            z-index: 10;
+            line-height: 1.2;
+        }
+        .node:hover {
+            transform: scale(1.1);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        }
+        .node.selected {
+            transform: scale(1.15);
+            box-shadow: 0 0 0 4px white, 0 0 0 8px #3b82f6;
+        }
+        .node.possible-product {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0px rgba(59, 130, 246, 0.7); }
+            100% { box-shadow: 0 0 0 20px rgba(59, 130, 246, 0); }
+        }
+        #arrow-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1; 
+        }
+        .reaction-path {
+            transition: opacity 0.5s ease;
+            fill: none;
+            stroke-width: 3px;
+        }
+        .mid-arrow {
+            transition: opacity 0.5s ease;
+            opacity: 0;
+        }
+        .reaction-text {
+            font-size: 12px;
+            font-weight: 600;
+            transition: opacity 0.5s ease;
+            opacity: 0;
+            text-anchor: middle;
+            cursor: pointer;
+            pointer-events: all; /* Make text clickable */
+        }
+        #modal-overlay {
+            transition: opacity 0.3s ease-in-out;
+            z-index: 50;
+        }
+        #example-card {
+            transition: transform 0.3s ease-in-out, opacity 0.3s ease-in-out;
+        }
+        .reaction-arrow {
+            position: relative;
+            width: 80px;
+            height: 2px;
+            background-color: #374151;
+            margin: 0 1rem;
+        }
+        .reaction-arrow::after {
+            content: '';
+            position: absolute;
+            right: -1px;
+            top: -4px;
+            border-style: solid;
+            border-width: 5px 0 5px 10px;
+            border-color: transparent transparent transparent #374151;
+        }
+    </style>
+</head>
+<body class="bg-gray-800 text-gray-100 flex flex-col items-center justify-center min-h-screen p-4">
+
+    <header class="text-center mb-4">
+        <h1 class="text-3xl md:text-4xl font-bold text-white">Organic Reaction Map</h1>
+        <p id="instruction-text" class="text-blue-300 mt-2 text-lg">Select a starting compound.</p>
+    </header>
+
+    <div id="map-container">
+        <svg id="arrow-svg" overflow="visible">
+            <defs>
+                <marker id="arrowhead-forward" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+                </marker>
+                <marker id="arrowhead-reverse" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" fill="#fb923c" />
+                </marker>
+            </defs>
+            <path id="reaction-path-forward" class="reaction-path" stroke="#34d399" marker-end="url(#arrowhead-forward)" style="opacity: 0;" />
+            <path id="reaction-path-reverse" class="reaction-path" stroke="#fb923c" marker-end="url(#arrowhead-reverse)" style="opacity: 0;" />
+            
+            <path id="mid-arrow-forward" class="mid-arrow" fill="#34d399" />
+            <path id="mid-arrow-reverse" class="mid-arrow" fill="#fb923c" />
+
+            <text dy="-12" class="reaction-text" id="text-forward" fill="#34d399"></text>
+            <text dy="-12" class="reaction-text" id="text-reverse" fill="#fb923c"></text>
+        </svg>
+
+        <!-- Nodes will be dynamically added here by JS -->
+    </div>
+
+    <!-- Modal for displaying reaction examples -->
+    <div id="modal-overlay" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 opacity-0 pointer-events-none">
+        <div id="example-card" class="bg-white rounded-2xl shadow-xl p-6 md:p-8 w-full max-w-3xl text-gray-800 transform scale-95 opacity-0 overflow-y-auto max-h-[90vh]">
+            <h2 id="example-title" class="text-2xl font-bold mb-6 text-center"></h2>
+            <div id="example-list" class="space-y-8">
+                <!-- Example items will be injected here -->
+            </div>
+            <button id="close-modal" class="w-full mt-8 bg-blue-500 text-white py-2 rounded-lg font-semibold hover:bg-blue-600">Close</button>
+        </div>
+    </div>
+
+    <script>
+    const compounds = {
+        // Core Hydrocarbon Axis (Top to Bottom)
+        'alkyne': { name: 'Alkyne', color: 'bg-red-600', position: { top: '0%', left: '45%' } },
+        'alkene': { name: 'Alkene', color: 'bg-red-500', position: { top: '25%', left: '45%' } },
+        'alkane': { name: 'Alkane', color: 'bg-gray-500', position: { top: '50%', left: '45%' } },
+
+        // Left Wing (Halogenation & Derivatives)
+        'alkyl-halide': { name: 'Alkyl Halide', color: 'bg-purple-500', position: { top: '25%', left: '15%' } },
+        'grignard': { name: 'Grignard Reagent', color: 'bg-purple-700', position: { top: '50%', left: '0%' } },
+        'amine': { name: 'Amine', color: 'bg-indigo-500', position: { top: '75%', left: '15%' } },
+        'ether': { name: 'Ether', color: 'bg-cyan-500', position: { top: '0%', left: '15%' } },
+
+        // Right Wing (Oxidation & Alcohols)
+        'alcohol-1': { name: '1° Alcohol', color: 'bg-blue-400', position: { top: '25%', left: '75%' } },
+        'aldehyde': { name: 'Aldehyde', color: 'bg-green-500', position: { top: '0%', left: '75%' } },
+        'acid': { name: 'Carboxylic Acid', color: 'bg-emerald-600', position: { top: '0%', left: '95%' } },
+        'ester': { name: 'Ester', color: 'bg-teal-500', position: { top: '25%', left: '95%' } },
+        
+        'alcohol-2': { name: '2° Alcohol', color: 'bg-blue-500', position: { top: '50%', left: '75%' } },
+        'ketone': { name: 'Ketone', color: 'bg-green-600', position: { top: '50%', left: '95%' } },
+
+        'alcohol-3': { name: '3° Alcohol', color: 'bg-blue-600', position: { top: '75%', left: '75%' } },
+    };
+
+    const reactions = {
+        'alkene-alkane': { title: 'Alkene to Alkane', details: 'H₂, Ni/Pt/Pd', conditions: { above: 'H₂, Ni/Pt/Pd', below: '' }, examples: [{ reactant: { formula: 'CH₂=CH₂', name: 'Ethene' }, product: { formula: 'CH₃-CH₃', name: 'Ethane' } }] },
+        'alkyne-alkene': { title: 'Alkyne to Alkene', details: "H₂, Lindlar's cat.", conditions: { above: "H₂, Lindlar's cat.", below: '(cis)' }, examples: [{ reactant: { formula: 'CH≡CH', name: 'Ethyne' }, product: { formula: 'CH₂=CH₂', name: 'Ethene' } }] },
+        'alkyne-alkane': { title: 'Alkyne to Alkane', details: 'H₂ (excess), Pt', conditions: { above: 'H₂ (excess)', below: 'Pt/Pd/Ni' }, examples: [{ reactant: { formula: 'CH≡CH', name: 'Ethyne' }, product: { formula: 'CH₃-CH₃', name: 'Ethane' } }] },
+        'alkene-alkyl-halide': { title: 'Alkene to Alkyl Halide', details: 'H-X', conditions: { above: 'H-X', below: "Markovnikov's" }, examples: [{ reactant: { formula: 'CH₃CH=CH₂', name: 'Propene' }, reagent: { formula: '+ HBr' }, product: { formula: 'CH₃CHBrCH₃', name: '2-Bromopropane' } }] },
+        'alkyl-halide-alkene': { title: 'Alkyl Halide to Alkene', details: 'KOH (alc)', conditions: { above: 'KOH (alcoholic)', below: 'Heat' }, examples: [{ reactant: { formula: 'CH₃CHBrCH₃', name: '2-Bromopropane' }, product: { formula: 'CH₃CH=CH₂', name: 'Propene' } }] },
+        'alkyl-halide-alcohol-1': { title: 'Alkyl Halide to 1° Alcohol', details: 'KOH (aq)', conditions: { above: 'KOH (aq)', below: 'SN2' }, examples: [{ reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } }] },
+        'alkyl-halide-grignard': { title: 'Alkyl Halide to Grignard', details: 'Mg, dry ether', conditions: { above: 'Mg', below: 'dry ether' }, examples: [{ reactant: { formula: 'CH₃I', name: 'Iodomethane' }, product: { formula: 'CH₃MgI', name: 'Methylmagnesium Iodide' } }] },
+        'alkyl-halide-amine': { title: 'Alkyl Halide to Amine', details: 'NH₃', conditions: { above: 'NH₃ (excess)', below: '' }, examples: [{ reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, product: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' } }] },
+        'alcohol-1-alkene': { title: '1° Alcohol to Alkene', details: 'Conc. H₂SO₄', conditions: { above: 'Conc. H₂SO₄', below: '170°C' }, examples: [{ reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₂=CH₂', name: 'Ethene' } }] },
+        'alcohol-1-aldehyde': { title: '1° Alcohol to Aldehyde', details: 'PCC', conditions: { above: 'PCC', below: 'CH₂Cl₂' }, examples: [{ reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃CHO', name: 'Ethanal' } }] },
+        'alcohol-1-acid': { title: '1° Alcohol to Carboxylic Acid', details: 'KMnO₄, H⁺', conditions: { above: 'KMnO₄, H⁺', below: 'Heat' }, examples: [{ reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } }] },
+        'aldehyde-alcohol-1': { title: 'Aldehyde to 1° Alcohol', details: 'NaBH₄ or LiAlH₄', conditions: { above: '1. LiAlH₄', below: '2. H₃O⁺' }, examples: [{ reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } }] },
+        'aldehyde-acid': { title: 'Aldehyde to Carboxylic Acid', details: "Tollens' reagent", conditions: { above: "[Ag(NH₃)₂]⁺", below: '' }, examples: [{ reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } }] },
+        'acid-ester': { title: 'Acid to Ester', details: 'Alcohol, H⁺', conditions: { above: 'R-OH, H⁺', below: 'Heat' }, examples: [{ reactant: { formula: 'CH₃COOH', name: 'Ethanoic Acid' }, reagent: { formula: '+ CH₃OH' }, product: { formula: 'CH₃COOCH₃', name: 'Methyl Acetate' } }] },
+        'alcohol-2-ketone': { title: '2° Alcohol to Ketone', details: 'K₂Cr₂O₇, H⁺', conditions: { above: 'K₂Cr₂O₇, H⁺', below: 'Heat' }, examples: [{ reactant: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' }, product: { formula: 'CH₃COCH₃', name: 'Acetone' } }] },
+        'ketone-alcohol-2': { title: 'Ketone to 2° Alcohol', details: 'NaBH₄ or LiAlH₄', conditions: { above: '1. NaBH₄', below: '2. H₃O⁺' }, examples: [{ reactant: { formula: 'CH₃COCH₃', name: 'Acetone' }, product: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' } }] },
+        'grignard-alcohol-2': { title: 'Grignard to 2° Alcohol', details: '1. Aldehyde, 2. H₃O⁺', conditions: { above: '1. R-CHO', below: '2. H₃O⁺' }, examples: [{ reactant: { formula: 'CH₃MgBr', name: 'MeMgBr' }, reagent: { formula: '+ CH₃CHO' }, product: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' } }] },
+        'grignard-alcohol-3': { title: 'Grignard to 3° Alcohol', details: '1. Ketone, 2. H₃O⁺', conditions: { above: '1. R-CO-R', below: '2. H₃O⁺' }, examples: [{ reactant: { formula: 'CH₃MgBr', name: 'MeMgBr' }, reagent: { formula: '+ CH₃COCH₃' }, product: { formula: '(CH₃)₃COH', name: 'tert-Butanol' } }] },
+        'alkyl-halide-ether': { title: 'Alkyl Halide to Ether', details: 'NaOR (Williamson)', conditions: { above: 'R\'-ONa', below: '' }, examples: [{ reactant: { formula: 'CH₃I', name: 'Iodomethane' }, reagent: { formula: '+ CH₃CH₂ONa' }, product: { formula: 'CH₃OCH₂CH₃', name: 'Ethyl methyl ether' } }] },
+    };
+
+    let selectedReactant = null;
+    let nodes = {};
+
+    const mapContainer = document.getElementById('map-container');
+    const instructionText = document.getElementById('instruction-text');
+    const pathForward = document.getElementById('reaction-path-forward');
+    const pathReverse = document.getElementById('reaction-path-reverse');
+    const midArrowForward = document.getElementById('mid-arrow-forward');
+    const midArrowReverse = document.getElementById('mid-arrow-reverse');
+    const textForward = document.getElementById('text-forward');
+    const textReverse = document.getElementById('text-reverse');
+    const modalOverlay = document.getElementById('modal-overlay');
+    const exampleCard = document.getElementById('example-card');
+    const exampleTitle = document.getElementById('example-title');
+    const exampleList = document.getElementById('example-list');
+    const closeModalBtn = document.getElementById('close-modal');
+
+    let forwardClickHandler = null;
+    let reverseClickHandler = null;
+
+    function initializeMap() {
+        Object.keys(compounds).forEach(key => {
+            const nodeEl = document.createElement('div');
+            nodeEl.className = 'node ' + compounds[key].color;
+            nodeEl.style.top = compounds[key].position.top;
+            nodeEl.style.left = compounds[key].position.left;
+            nodeEl.dataset.type = key;
+            nodeEl.innerHTML = `<span>${compounds[key].name}</span>`;
+            mapContainer.appendChild(nodeEl);
+            nodes[key] = nodeEl;
+            nodeEl.addEventListener('click', (e) => { e.stopPropagation(); onNodeClick(key); });
+        });
+        
+        closeModalBtn.addEventListener('click', hideExamplePopup);
+        modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) hideExamplePopup(); });
+    }
+
+    function onNodeClick(type) {
+        if (pathForward.style.opacity === '1' || pathReverse.style.opacity === '1') {
+            resetSelection();
+        }
+
+        if (!selectedReactant) {
+            selectedReactant = type;
+            nodes[type].classList.add('selected');
+            instructionText.textContent = `Selected ${compounds[type].name}. Now, choose a product.`;
+            highlightPossibleProducts();
+        } else {
+            const product = type;
+            if (product === selectedReactant) { resetSelection(); return; }
+            
+            const forwardReaction = reactions[`${selectedReactant}-${product}`];
+            const reverseReaction = reactions[`${product}-${selectedReactant}`];
+
+            if (forwardReaction || reverseReaction) {
+                drawReactionPaths(selectedReactant, product);
+            } else {
+                instructionText.textContent = `No direct reaction to ${compounds[product].name}. Try another.`;
+                nodes[product].style.animation = 'shake 0.5s';
+                setTimeout(() => nodes[product].style.animation = '', 500);
+            }
+        }
+    }
+
+    function highlightPossibleProducts() {
+        Object.keys(nodes).forEach(key => {
+            if (key === selectedReactant) return;
+            if (reactions[`${selectedReactant}-${key}`] || reactions[`${key}-${selectedReactant}`]) {
+                nodes[key].classList.add('possible-product');
+            }
+        });
+    }
+
+    function drawReactionPaths(reactantKey, productKey) {
+        const reactantNode = nodes[reactantKey];
+        const productNode = nodes[productKey];
+        
+        const start = { x: reactantNode.offsetLeft + reactantNode.offsetWidth / 2, y: reactantNode.offsetTop + reactantNode.offsetHeight / 2 };
+        const end = { x: productNode.offsetLeft + productNode.offsetWidth / 2, y: productNode.offsetTop + productNode.offsetHeight / 2 };
+
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const normal = { x: -dy, y: dx };
+        const normLength = Math.sqrt(normal.x * normal.x + normal.y * normal.y);
+        const unitNormal = { x: normal.x / normLength, y: normal.y / normLength };
+        const offset = 35;
+
+        const forwardKey = `${reactantKey}-${productKey}`;
+        const reverseKey = `${productKey}-${reactantKey}`;
+        const forwardReaction = reactions[forwardKey];
+        const reverseReaction = reactions[reverseKey];
+
+        const arrowShape = 'M -6 -4 L 5 0 L -6 4 Z';
+
+        if (forwardReaction) {
+            const control = { x: (start.x + end.x) / 2 + unitNormal.x * offset, y: (start.y + end.y) / 2 + unitNormal.y * offset };
+            pathForward.setAttribute('d', `M ${start.x},${start.y} Q ${control.x},${control.y} ${end.x},${end.y}`);
+            pathForward.style.opacity = '1';
+            
+            const tangentVector = { x: (control.x - start.x) + (end.x - control.x), y: (control.y - start.y) + (end.y - control.y) };
+            let angle = Math.atan2(tangentVector.y, tangentVector.x) * (180 / Math.PI);
+            const midPoint = { x: 0.25 * start.x + 0.5 * control.x + 0.25 * end.x, y: 0.25 * start.y + 0.5 * control.y + 0.25 * end.y };
+            
+            midArrowForward.setAttribute('d', arrowShape);
+            midArrowForward.setAttribute('transform', `translate(${midPoint.x}, ${midPoint.y}) rotate(${angle})`);
+            midArrowForward.style.opacity = '1';
+            
+            if (Math.abs(angle) > 90) angle += 180;
+            textForward.textContent = forwardReaction.details;
+            textForward.setAttribute('transform', `translate(${midPoint.x}, ${midPoint.y}) rotate(${angle})`);
+            forwardClickHandler = () => showExamplePopup(forwardReaction);
+            textForward.addEventListener('click', forwardClickHandler);
+            textForward.style.opacity = '1';
+        }
+        
+        if (reverseReaction) {
+            const control = { x: (start.x + end.x) / 2 - unitNormal.x * offset, y: (start.y + end.y) / 2 - unitNormal.y * offset };
+            pathReverse.setAttribute('d', `M ${end.x},${end.y} Q ${control.x},${control.y} ${start.x},${start.y}`);
+            pathReverse.style.opacity = '1';
+
+            const tangentVector = { x: (control.x - end.x) + (start.x - control.x), y: (control.y - end.y) + (start.y - control.y) };
+            let angle = Math.atan2(tangentVector.y, tangentVector.x) * (180 / Math.PI);
+            const midPoint = { x: 0.25 * end.x + 0.5 * control.x + 0.25 * start.x, y: 0.25 * end.y + 0.5 * control.y + 0.25 * start.y };
+            
+            midArrowReverse.setAttribute('d', arrowShape);
+            midArrowReverse.setAttribute('transform', `translate(${midPoint.x}, ${midPoint.y}) rotate(${angle})`);
+            midArrowReverse.style.opacity = '1';
+
+            if (Math.abs(angle) > 90) angle += 180;
+            textReverse.textContent = reverseReaction.details;
+            textReverse.setAttribute('transform', `translate(${midPoint.x}, ${midPoint.y}) rotate(${angle})`);
+            reverseClickHandler = () => showExamplePopup(reverseReaction);
+            textReverse.addEventListener('click', reverseClickHandler);
+            textReverse.style.opacity = '1';
+        }
+
+        instructionText.textContent = 'Reaction displayed. Click conditions for examples or click anywhere to reset.';
+        reactantNode.classList.remove('selected');
+        Object.values(nodes).forEach(node => node.classList.remove('possible-product'));
+        selectedReactant = null;
+    }
+
+    function resetSelection() {
+        if (selectedReactant) {
+            nodes[selectedReactant].classList.remove('selected');
+        }
+        Object.values(nodes).forEach(node => node.classList.remove('possible-product'));
+        
+        pathForward.style.opacity = '0';
+        pathReverse.style.opacity = '0';
+        midArrowForward.style.opacity = '0';
+        midArrowReverse.style.opacity = '0';
+        textForward.style.opacity = '0';
+        textReverse.style.opacity = '0';
+
+        if (forwardClickHandler) textForward.removeEventListener('click', forwardClickHandler);
+        if (reverseClickHandler) textReverse.removeEventListener('click', reverseClickHandler);
+        forwardClickHandler = null;
+        reverseClickHandler = null;
+
+        hideExamplePopup();
+        selectedReactant = null;
+        instructionText.textContent = 'Select a starting compound.';
+    }
+
+    function showExamplePopup(reaction) {
+        exampleTitle.textContent = reaction.title;
+        exampleList.innerHTML = ''; // Clear previous examples
+        
+        reaction.examples.forEach(ex => {
+            const listItem = document.createElement('li');
+            listItem.className = 'flex items-center justify-center text-center border-b pb-4 last:border-b-0';
+            
+            const reagentBefore = ex.reagent && ex.reagent.formula.startsWith('+');
+            const reagentAfter = ex.reagent && !ex.reagent.formula.startsWith('+');
+
+            listItem.innerHTML = `
+                <div class="text-center">
+                    <div class="font-mono p-2">${ex.reactant.formula}</div>
+                    <div class="text-sm text-gray-600">${ex.reactant.name || ''}</div>
+                </div>
+                
+                ${ex.reagent && reagentBefore ? `
+                <div class="text-center text-2xl mx-1">+</div>
+                <div class="text-center">
+                    <div class="font-mono p-2">${ex.reagent.formula.replace('+ ', '')}</div>
+                </div>` : ''}
+
+                <div class="flex flex-col items-center justify-center mx-2">
+                    <div class="text-xs font-semibold text-blue-600">${reaction.conditions.above}</div>
+                    <div class="reaction-arrow"></div>
+                    <div class="text-xs font-semibold text-blue-600">${reaction.conditions.below}</div>
+                </div>
+                
+                <div class="text-center">
+                    <div class="font-mono p-2">${ex.product.formula}</div>
+                    <div class="text-sm text-gray-600">${ex.product.name || ''}</div>
+                </div>
+
+                ${ex.reagent && reagentAfter ? `
+                <div class="text-center text-2xl mx-1">+</div>
+                <div class="text-center">
+                    <div class="font-mono p-2">${ex.reagent.formula.replace('+ ', '')}</div>
+                </div>` : ''}
+            `;
+            exampleList.appendChild(listItem);
+        });
+
+        modalOverlay.classList.remove('opacity-0', 'pointer-events-none');
+        exampleCard.classList.remove('scale-95', 'opacity-0');
+    }
+
+    function hideExamplePopup() {
+        modalOverlay.classList.add('opacity-0', 'pointer-events-none');
+        exampleCard.classList.add('scale-95', 'opacity-0');
+    }
+
+    document.body.addEventListener('click', (e) => {
+        if (!e.target.closest('.node') && !e.target.closest('.reaction-text')) {
+            resetSelection();
+        }
+    });
+
+    initializeMap();
+    </script>
+    <style>
+        @keyframes shake {
+            0%, 100% { transform: translateX(0) scale(1.1); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px) scale(1.1); }
+            20%, 40%, 60%, 80% { transform: translateX(5px) scale(1.1); }
+        }
+    </style>
+</body>
+</html>
