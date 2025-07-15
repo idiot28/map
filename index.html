@@ -2,28 +2,49 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Interactive Organic Reaction Map</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --brand-color: #852dfe;
+            --brand-color-rgb: 133, 45, 254;
+            --brand-dark: #2d3748;
+            --forward-arrow: #22d3ee; /* cyan-400 */
+            --reverse-arrow: #f472b6; /* pink-400 */
+        }
         body {
             font-family: 'Inter', sans-serif;
-            overflow: hidden; 
+            background: linear-gradient(180deg, var(--brand-dark) 0%, #3c176c 100%);
+            overflow: hidden; /* Prevent scrolling of the page */
+        }
+        #map-wrapper {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: none; /* Disable default touch actions */
+            cursor: grab;
+        }
+        #map-wrapper.grabbing {
+            cursor: grabbing;
         }
         #map-container {
             position: relative;
-            width: 100%;
-            max-width: 800px; /* Increased size for more nodes */
-            height: 650px; /* Increased size for more nodes */
-            margin: auto;
+            width: 95vw; 
+            max-width: 650px;
+            aspect-ratio: 1 / 1;
+            transform-origin: center center;
+            transition: transform 0.2s ease-out;
         }
         .node {
             position: absolute;
-            width: 100px;
-            height: 100px;
+            width: 90px;
+            height: 90px;
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -31,29 +52,46 @@
             text-align: center;
             font-weight: 600;
             color: white;
-            cursor: pointer;
-            transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+            cursor: grab;
+            transition: all 0.5s ease, top 0.5s ease, left 0.5s ease;
             user-select: none;
             flex-direction: column;
             padding: 4px;
-            font-size: 12px;
+            font-size: 11px;
             z-index: 10;
             line-height: 1.2;
+            border: 2px solid rgba(255,255,255,0.3);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        .node .node-label {
+            transition: font-size 0.2s ease-out;
+        }
+        .node.dragging {
+            cursor: grabbing;
+            transform: scale(1.1);
+            z-index: 20;
+            transition: none;
         }
         .node:hover {
             transform: scale(1.1);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+        }
+        /* Dim nodes that are not selected or possible products in focus mode */
+        #map-container.focus-mode .node:not(.selected):not(.possible-product) {
+            opacity: 0.3;
+            transform: scale(0.9);
         }
         .node.selected {
             transform: scale(1.15);
-            box-shadow: 0 0 0 4px white, 0 0 0 8px #3b82f6;
+            box-shadow: 0 0 0 4px white, 0 0 0 8px var(--brand-color);
         }
+        /* Add pulse animation to possible products */
         .node.possible-product {
             animation: pulse 1.5s infinite;
         }
         @keyframes pulse {
-            0% { box-shadow: 0 0 0 0px rgba(59, 130, 246, 0.7); }
-            100% { box-shadow: 0 0 0 20px rgba(59, 130, 246, 0); }
+            0% { box-shadow: 0 0 0 0px rgba(var(--brand-color-rgb), 0.7), 0 4px 15px rgba(0,0,0,0.3); }
+            100% { box-shadow: 0 0 0 20px rgba(var(--brand-color-rgb), 0), 0 4px 15px rgba(0,0,0,0.3); }
         }
         #arrow-svg {
             position: absolute;
@@ -63,23 +101,26 @@
             height: 100%;
             z-index: 1; 
         }
+        .reaction-path, .mid-arrow, .reaction-text {
+            transition: opacity 0.4s ease-in-out, font-size 0.5s ease-out;
+            opacity: 0;
+        }
         .reaction-path {
-            transition: opacity 0.5s ease;
             fill: none;
             stroke-width: 3px;
-        }
-        .mid-arrow {
-            transition: opacity 0.5s ease;
-            opacity: 0;
+            transition: d 0.5s ease, opacity 0.4s ease-in-out;
         }
         .reaction-text {
             font-size: 12px;
             font-weight: 600;
-            transition: opacity 0.5s ease;
-            opacity: 0;
             text-anchor: middle;
             cursor: pointer;
-            pointer-events: all; /* Make text clickable */
+            pointer-events: all;
+            paint-order: stroke;
+            stroke: var(--brand-dark);
+            stroke-width: 3px;
+            stroke-linecap: butt;
+            stroke-linejoin: miter;
         }
         #modal-overlay {
             transition: opacity 0.3s ease-in-out;
@@ -90,10 +131,10 @@
         }
         .reaction-arrow {
             position: relative;
-            width: 80px;
+            width: 60px;
             height: 2px;
             background-color: #374151;
-            margin: 0 1rem;
+            margin: 0 0.5rem;
         }
         .reaction-arrow::after {
             content: '';
@@ -101,262 +142,714 @@
             right: -1px;
             top: -4px;
             border-style: solid;
-            border-width: 5px 0 5px 10px;
+            border-width: 5px 0 5px 8px;
             border-color: transparent transparent transparent #374151;
+        }
+        .control-btn {
+             margin-top: 0.5rem;
+             padding: 0.5rem 1rem;
+             color: white;
+             font-weight: 600;
+             border-radius: 0.5rem;
+             transition: opacity 0.3s;
+             background-color: var(--brand-color);
+        }
+        .control-btn:hover {
+            opacity: 0.9;
+        }
+        #controls-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 100;
+            background-color: rgba(45, 55, 72, 0.8);
+            padding: 1rem;
+            border-radius: 0.75rem;
+            backdrop-filter: blur(5px);
+        }
+        .control-group {
+            text-align: center;
+            color: white;
+        }
+        .control-label {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+        .buttons-wrapper {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .action-btn {
+            width: 40px;
+            height: 40px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: white;
+            background-color: var(--brand-color);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s, transform 0.1s, box-shadow 0.2s;
+        }
+        .action-btn:hover {
+            background-color: #6d28d9;
+        }
+        .action-btn.active {
+            transform: scale(0.95);
+            box-shadow: 0 0 15px rgba(var(--brand-color-rgb), 0.8);
         }
     </style>
 </head>
 <body class="bg-gray-800 text-gray-100 flex flex-col items-center justify-center min-h-screen p-4">
 
-    <header class="text-center mb-4">
-        <h1 class="text-3xl md:text-4xl font-bold text-white">Organic Reaction Map</h1>
-        <p id="instruction-text" class="text-blue-300 mt-2 text-lg">Select a starting compound.</p>
+    <header class="text-center my-2 absolute top-0 left-0 right-0 z-50">
+        <h1 class="text-2xl md:text-3xl font-bold text-white">Organic Reaction Map</h1>
+        <p id="instruction-text" class="text-purple-300 mt-1 text-md h-6">Select a starting compound.</p>
+        <div class="flex justify-center space-x-2 mt-2">
+            <button id="center-node-btn" class="control-btn hidden">Center Selected Node</button>
+            <button id="reset-layout-btn" class="control-btn">Reset Layout</button>
+        </div>
     </header>
 
-    <div id="map-container">
-        <svg id="arrow-svg" overflow="visible">
-            <defs>
-                <marker id="arrowhead-forward" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
-                    <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
-                </marker>
-                <marker id="arrowhead-reverse" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
-                    <polygon points="0 0, 10 3.5, 0 7" fill="#fb923c" />
-                </marker>
-            </defs>
-            <path id="reaction-path-forward" class="reaction-path" stroke="#34d399" marker-end="url(#arrowhead-forward)" style="opacity: 0;" />
-            <path id="reaction-path-reverse" class="reaction-path" stroke="#fb923c" marker-end="url(#arrowhead-reverse)" style="opacity: 0;" />
-            
-            <path id="mid-arrow-forward" class="mid-arrow" fill="#34d399" />
-            <path id="mid-arrow-reverse" class="mid-arrow" fill="#fb923c" />
+    <div id="map-wrapper">
+        <div id="map-container">
+            <svg id="arrow-svg" overflow="visible">
+                <defs>
+                    <marker id="arrowhead-forward" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                        <polygon points="0 0, 10 3.5, 0 7" fill="var(--forward-arrow)" />
+                    </marker>
+                    <marker id="arrowhead-reverse" markerWidth="10" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                        <polygon points="0 0, 10 3.5, 0 7" fill="var(--reverse-arrow)" />
+                    </marker>
+                </defs>
+                <g id="preview-paths-container"></g>
+                <g id="final-paths-container"></g>
+            </svg>
+            <!-- Nodes will be dynamically added here by JS -->
+        </div>
+    </div>
 
-            <text dy="-12" class="reaction-text" id="text-forward" fill="#34d399"></text>
-            <text dy="-12" class="reaction-text" id="text-reverse" fill="#fb923c"></text>
-        </svg>
-
-        <!-- Nodes will be dynamically added here by JS -->
+    <div id="controls-container" class="flex flex-col md:flex-row gap-4">
+        <div class="control-group">
+            <div class="control-label">Zoom In / Out</div>
+            <div class="buttons-wrapper">
+                <button id="zoom-out-btn" class="action-btn" title="Zoom Out">–</button>
+                <button id="zoom-in-btn" class="action-btn" title="Zoom In">+</button>
+            </div>
+        </div>
+        <div class="control-group">
+            <div class="control-label">Adjust Node Spacing</div>
+            <div class="buttons-wrapper">
+                <button id="decrease-spacing-btn" class="action-btn" title="Decrease Spacing">–</button>
+                <button id="increase-spacing-btn" class="action-btn" title="Increase Spacing">+</button>
+            </div>
+        </div>
     </div>
 
     <!-- Modal for displaying reaction examples -->
     <div id="modal-overlay" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 opacity-0 pointer-events-none">
-        <div id="example-card" class="bg-white rounded-2xl shadow-xl p-6 md:p-8 w-full max-w-3xl text-gray-800 transform scale-95 opacity-0 overflow-y-auto max-h-[90vh]">
-            <h2 id="example-title" class="text-2xl font-bold mb-6 text-center"></h2>
+        <div id="example-card" class="bg-white rounded-2xl shadow-xl p-4 md:p-8 w-full max-w-3xl text-gray-800 transform scale-95 opacity-0 overflow-y-auto max-h-[90vh]">
+            <h2 id="example-title" class="text-2xl font-bold mb-6 text-center" style="color: var(--brand-color);"></h2>
             <div id="example-list" class="space-y-8">
                 <!-- Example items will be injected here -->
             </div>
-            <button id="close-modal" class="w-full mt-8 bg-blue-500 text-white py-2 rounded-lg font-semibold hover:bg-blue-600">Close</button>
+            <button id="close-modal" class="w-full mt-8 text-white py-2 rounded-lg font-semibold hover:opacity-90" style="background-color: var(--brand-color);">Close</button>
         </div>
     </div>
 
     <script>
-    const compounds = {
-        // Core Hydrocarbon Axis (Top to Bottom)
-        'alkyne': { name: 'Alkyne', color: 'bg-red-600', position: { top: '0%', left: '45%' } },
-        'alkene': { name: 'Alkene', color: 'bg-red-500', position: { top: '25%', left: '45%' } },
-        'alkane': { name: 'Alkane', color: 'bg-gray-500', position: { top: '50%', left: '45%' } },
-
-        // Left Wing (Halogenation & Derivatives)
-        'alkyl-halide': { name: 'Alkyl Halide', color: 'bg-purple-500', position: { top: '25%', left: '15%' } },
-        'grignard': { name: 'Grignard Reagent', color: 'bg-purple-700', position: { top: '50%', left: '0%' } },
-        'amine': { name: 'Amine', color: 'bg-indigo-500', position: { top: '75%', left: '15%' } },
-        'ether': { name: 'Ether', color: 'bg-cyan-500', position: { top: '0%', left: '15%' } },
-
-        // Right Wing (Oxidation & Alcohols)
-        'alcohol-1': { name: '1° Alcohol', color: 'bg-blue-400', position: { top: '25%', left: '75%' } },
-        'aldehyde': { name: 'Aldehyde', color: 'bg-green-500', position: { top: '0%', left: '75%' } },
-        'acid': { name: 'Carboxylic Acid', color: 'bg-emerald-600', position: { top: '0%', left: '95%' } },
-        'ester': { name: 'Ester', color: 'bg-teal-500', position: { top: '25%', left: '95%' } },
-        
-        'alcohol-2': { name: '2° Alcohol', color: 'bg-blue-500', position: { top: '50%', left: '75%' } },
-        'ketone': { name: 'Ketone', color: 'bg-green-600', position: { top: '50%', left: '95%' } },
-
-        'alcohol-3': { name: '3° Alcohol', color: 'bg-blue-600', position: { top: '75%', left: '75%' } },
+    const NODE_DIAMETER = 90;
+    const NODE_RADIUS = NODE_DIAMETER / 2;
+    const DEFAULT_RADIUS = 38;
+    const MIN_RADIUS = 25;
+    let centerNodeKey = 'alkene';
+    
+    const baseCompounds = {
+        'alkene': { name: 'Alkene', color: 'bg-violet-500' },
+        'alkyne': { name: 'Alkyne', color: 'bg-violet-600' },
+        'alkane': { name: 'Alkane', color: 'bg-slate-500' },
+        'alkyl-halide': { name: 'Alkyl Halide', color: 'bg-purple-500' },
+        'grignard': { name: 'Grignard Reagent', color: 'bg-purple-700' },
+        'amine': { name: 'Amine', color: 'bg-indigo-500' },
+        'ether': { name: 'Ether', color: 'bg-cyan-500' },
+        'alcohol-1': { name: '1° Alcohol', color: 'bg-fuchsia-500' },
+        'aldehyde': { name: 'Aldehyde', color: 'bg-purple-600' },
+        'acid': { name: 'Carboxylic Acid', color: 'bg-purple-800' },
+        'ester': { name: 'Ester', color: 'bg-indigo-600' },
+        'alcohol-2': { name: '2° Alcohol', color: 'bg-fuchsia-600' },
+        'ketone': { name: 'Ketone', color: 'bg-violet-700' },
+        'alcohol-3': { name: '3° Alcohol', color: 'bg-fuchsia-700' },
     };
 
-    const reactions = {
-        'alkene-alkane': { title: 'Alkene to Alkane', details: 'H₂, Ni/Pt/Pd', conditions: { above: 'H₂, Ni/Pt/Pd', below: '' }, examples: [{ reactant: { formula: 'CH₂=CH₂', name: 'Ethene' }, product: { formula: 'CH₃-CH₃', name: 'Ethane' } }] },
-        'alkyne-alkene': { title: 'Alkyne to Alkene', details: "H₂, Lindlar's cat.", conditions: { above: "H₂, Lindlar's cat.", below: '(cis)' }, examples: [{ reactant: { formula: 'CH≡CH', name: 'Ethyne' }, product: { formula: 'CH₂=CH₂', name: 'Ethene' } }] },
-        'alkyne-alkane': { title: 'Alkyne to Alkane', details: 'H₂ (excess), Pt', conditions: { above: 'H₂ (excess)', below: 'Pt/Pd/Ni' }, examples: [{ reactant: { formula: 'CH≡CH', name: 'Ethyne' }, product: { formula: 'CH₃-CH₃', name: 'Ethane' } }] },
-        'alkene-alkyl-halide': { title: 'Alkene to Alkyl Halide', details: 'H-X', conditions: { above: 'H-X', below: "Markovnikov's" }, examples: [{ reactant: { formula: 'CH₃CH=CH₂', name: 'Propene' }, reagent: { formula: '+ HBr' }, product: { formula: 'CH₃CHBrCH₃', name: '2-Bromopropane' } }] },
-        'alkyl-halide-alkene': { title: 'Alkyl Halide to Alkene', details: 'KOH (alc)', conditions: { above: 'KOH (alcoholic)', below: 'Heat' }, examples: [{ reactant: { formula: 'CH₃CHBrCH₃', name: '2-Bromopropane' }, product: { formula: 'CH₃CH=CH₂', name: 'Propene' } }] },
-        'alkyl-halide-alcohol-1': { title: 'Alkyl Halide to 1° Alcohol', details: 'KOH (aq)', conditions: { above: 'KOH (aq)', below: 'SN2' }, examples: [{ reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } }] },
-        'alkyl-halide-grignard': { title: 'Alkyl Halide to Grignard', details: 'Mg, dry ether', conditions: { above: 'Mg', below: 'dry ether' }, examples: [{ reactant: { formula: 'CH₃I', name: 'Iodomethane' }, product: { formula: 'CH₃MgI', name: 'Methylmagnesium Iodide' } }] },
-        'alkyl-halide-amine': { title: 'Alkyl Halide to Amine', details: 'NH₃', conditions: { above: 'NH₃ (excess)', below: '' }, examples: [{ reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, product: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' } }] },
-        'alcohol-1-alkene': { title: '1° Alcohol to Alkene', details: 'Conc. H₂SO₄', conditions: { above: 'Conc. H₂SO₄', below: '170°C' }, examples: [{ reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₂=CH₂', name: 'Ethene' } }] },
-        'alcohol-1-aldehyde': { title: '1° Alcohol to Aldehyde', details: 'PCC', conditions: { above: 'PCC', below: 'CH₂Cl₂' }, examples: [{ reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃CHO', name: 'Ethanal' } }] },
-        'alcohol-1-acid': { title: '1° Alcohol to Carboxylic Acid', details: 'KMnO₄, H⁺', conditions: { above: 'KMnO₄, H⁺', below: 'Heat' }, examples: [{ reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } }] },
-        'aldehyde-alcohol-1': { title: 'Aldehyde to 1° Alcohol', details: 'NaBH₄ or LiAlH₄', conditions: { above: '1. LiAlH₄', below: '2. H₃O⁺' }, examples: [{ reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } }] },
-        'aldehyde-acid': { title: 'Aldehyde to Carboxylic Acid', details: "Tollens' reagent", conditions: { above: "[Ag(NH₃)₂]⁺", below: '' }, examples: [{ reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } }] },
-        'acid-ester': { title: 'Acid to Ester', details: 'Alcohol, H⁺', conditions: { above: 'R-OH, H⁺', below: 'Heat' }, examples: [{ reactant: { formula: 'CH₃COOH', name: 'Ethanoic Acid' }, reagent: { formula: '+ CH₃OH' }, product: { formula: 'CH₃COOCH₃', name: 'Methyl Acetate' } }] },
-        'alcohol-2-ketone': { title: '2° Alcohol to Ketone', details: 'K₂Cr₂O₇, H⁺', conditions: { above: 'K₂Cr₂O₇, H⁺', below: 'Heat' }, examples: [{ reactant: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' }, product: { formula: 'CH₃COCH₃', name: 'Acetone' } }] },
-        'ketone-alcohol-2': { title: 'Ketone to 2° Alcohol', details: 'NaBH₄ or LiAlH₄', conditions: { above: '1. NaBH₄', below: '2. H₃O⁺' }, examples: [{ reactant: { formula: 'CH₃COCH₃', name: 'Acetone' }, product: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' } }] },
-        'grignard-alcohol-2': { title: 'Grignard to 2° Alcohol', details: '1. Aldehyde, 2. H₃O⁺', conditions: { above: '1. R-CHO', below: '2. H₃O⁺' }, examples: [{ reactant: { formula: 'CH₃MgBr', name: 'MeMgBr' }, reagent: { formula: '+ CH₃CHO' }, product: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' } }] },
-        'grignard-alcohol-3': { title: 'Grignard to 3° Alcohol', details: '1. Ketone, 2. H₃O⁺', conditions: { above: '1. R-CO-R', below: '2. H₃O⁺' }, examples: [{ reactant: { formula: 'CH₃MgBr', name: 'MeMgBr' }, reagent: { formula: '+ CH₃COCH₃' }, product: { formula: '(CH₃)₃COH', name: 'tert-Butanol' } }] },
-        'alkyl-halide-ether': { title: 'Alkyl Halide to Ether', details: 'NaOR (Williamson)', conditions: { above: 'R\'-ONa', below: '' }, examples: [{ reactant: { formula: 'CH₃I', name: 'Iodomethane' }, reagent: { formula: '+ CH₃CH₂ONa' }, product: { formula: 'CH₃OCH₂CH₃', name: 'Ethyl methyl ether' } }] },
-    };
+    const compounds = {};
+
+    const reactions = [
+{ start: 'alkene', end: 'alkane', title: 'Alkene to Alkane', details: 'H₂, Ni/Pt/Pd', conditions: { above: 'H₂, Ni/Pt/Pd', below: '' }, examples: [ { reactant: { formula: 'CH₂=CH₂', name: 'Ethene' }, product: { formula: 'CH₃-CH₃', name: 'Ethane' } } ] },
+{ start: 'alkyne', end: 'alkene', title: 'Alkyne to Alkene', details: "H₂, Lindlar's cat.", conditions: { above: "H₂, Lindlar's cat.", below: '(cis)' }, examples: [ { reactant: { formula: 'CH≡CH', name: 'Ethyne' }, product: { formula: 'CH₂=CH₂', name: 'Ethene' } } ] },
+{ start: 'alkyne', end: 'alkane', title: 'Alkyne to Alkane', details: 'H₂ (excess), Pt', conditions: { above: 'H₂ (excess)', below: 'Pt/Pd/Ni' }, examples: [ { reactant: { formula: 'CH≡CH', name: 'Ethyne' }, product: { formula: 'CH₃-CH₃', name: 'Ethane' } } ] },
+{ start: 'alkene', end: 'alkyl-halide', title: 'Alkene to Alkyl Halide', details: 'H-X', conditions: { above: 'H-X', below: "Markovnikov's" }, examples: [ { reactant: { formula: 'CH₃CH=CH₂', name: 'Propene' }, reagent: { formula: '+ HBr' }, product: { formula: 'CH₃CHBrCH₃', name: '2-Bromopropane' } } ] },
+{ start: 'alkyl-halide', end: 'alkene', title: 'Alkyl Halide to Alkene', details: 'KOH (alc)', conditions: { above: 'KOH (alcoholic)', below: 'Heat' }, examples: [ { reactant: { formula: 'CH₃CHBrCH₃', name: '2-Bromopropane' }, product: { formula: 'CH₃CH=CH₂', name: 'Propene' } } ] },
+{ start: 'alkyl-halide', end: 'alcohol-1', title: 'Alkyl Halide to 1° Alcohol', details: 'KOH (aq)', conditions: { above: 'KOH (aq)', below: 'SN2' }, examples: [ { reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } } ] },
+{ start: 'alkyl-halide', end: 'grignard', title: 'Alkyl Halide to Grignard', details: 'Mg, dry ether', conditions: { above: 'Mg', below: 'dry ether' }, examples: [ { reactant: { formula: 'CH₃I', name: 'Iodomethane' }, product: { formula: 'CH₃MgI', name: 'Methylmagnesium Iodide' } } ] },
+{ start: 'alkyl-halide', end: 'amine', title: 'Alkyl Halide to Amine', details: 'NH₃', conditions: { above: 'NH₃ (excess)', below: '' }, examples: [ { reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, product: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' } } ] },
+{ start: 'alkyl-halide', end: 'ether', title: 'Alkyl Halide to Ether', details: 'NaOR (Williamson)', conditions: { above: "R'-ONa", below: '' }, examples: [ { reactant: { formula: 'CH₃I', name: 'Iodomethane' }, reagent: { formula: '+ CH₃CH₂ONa' }, product: { formula: 'CH₃OCH₂CH₃', name: 'Ethyl methyl ether' } } ] },
+{ start: 'alkane', end: 'alkyl-halide', title: 'Alkane to Alkyl Halide', details: 'Cl₂ or Br₂, UV light', conditions: { above: 'Cl₂ or Br₂', below: 'UV light' }, examples: [ { reactant: { formula: 'CH₄', name: 'Methane' }, product: { formula: 'CH₃Cl', name: 'Chloromethane' } } ] },
+{ start: 'alcohol-1', end: 'alkene', title: '1° Alcohol to Alkene', details: 'Conc. H₂SO₄', conditions: { above: 'Conc. H₂SO₄', below: '170 °C' }, examples: [ { reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₂=CH₂', name: 'Ethene' } } ] },
+{ start: 'alcohol-1', end: 'aldehyde', title: '1° Alcohol to Aldehyde', details: 'PCC', conditions: { above: 'PCC', below: 'CH₂Cl₂' }, examples: [ { reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃CHO', name: 'Ethanal' } } ] },
+{ start: 'alcohol-1', end: 'acid', title: '1° Alcohol to Carboxylic Acid', details: 'KMnO₄, H⁺', conditions: { above: 'KMnO₄, H⁺', below: 'Heat' }, examples: [ { reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } } ] },
+{ start: 'aldehyde', end: 'alcohol-1', title: 'Aldehyde to 1° Alcohol', details: 'NaBH₄ or LiAlH₄', conditions: { above: '1. LiAlH₄', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } } ] },
+{ start: 'alkene', end: 'alcohol-1', title: 'Alkene to 1° Alcohol', details: '1. BH₃·THF, 2. H₂O₂/⁻OH', conditions: { above: '1. BH₃·THF', below: '2. H₂O₂, ⁻OH' }, examples: [ { reactant: { formula: 'CH₃CH=CH₂', name: 'Propene' }, product: { formula: 'CH₃CH₂CH₂OH', name: 'Propan-1-ol' } } ] },
+{ start: 'alkene', end: 'alcohol-2', title: 'Alkene to 2° Alcohol', details: 'H₂O, H₂SO₄', conditions: { above: 'H₂O', below: 'Conc. H₂SO₄' }, examples: [ { reactant: { formula: 'CH₃CH=CH₂', name: 'Propene' }, product: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' } } ] },
+{ start: 'alkyne', end: 'ketone', title: 'Alkyne to Ketone', details: 'HgSO₄, H₂SO₄, H₂O', conditions: { above: 'HgSO₄, H₂SO₄', below: 'H₂O, Heat' }, examples: [ { reactant: { formula: 'CH₃C≡CH', name: 'Propyne' }, product: { formula: 'CH₃COCH₃', name: 'Acetone' } } ] },
+{ start: 'alkyne', end: 'aldehyde', title: 'Alkyne to Aldehyde', details: '1. (Sia)₂BH, 2. H₂O₂/⁻OH', conditions: { above: '1. (Sia)₂BH', below: '2. H₂O₂, ⁻OH' }, examples: [ { reactant: { formula: 'CH≡CH', name: 'Ethyne' }, product: { formula: 'CH₃CHO', name: 'Ethanal' } } ] },
+{ start: 'alkyl-halide', end: 'alkane', title: 'Alkyl Halide to Alkane', details: 'Zn, H⁺', conditions: { above: 'Zn, H⁺', below: '' }, examples: [ { reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, product: { formula: 'CH₃CH₃', name: 'Ethane' } } ] },
+{ start: 'alcohol-1', end: 'alkyl-halide', title: '1° Alcohol to Alkyl Halide', details: 'PBr₃', conditions: { above: 'PBr₃', below: '' }, examples: [ { reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃CH₂Br', name: 'Bromoethane' } } ] },
+{ start: 'alcohol-2', end: 'alkyl-halide', title: '2° Alcohol to Alkyl Halide', details: 'HCl/ZnCl₂', conditions: { above: 'HCl', below: 'ZnCl₂, Heat' }, examples: [ { reactant: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' }, product: { formula: 'CH₃CHClCH₃', name: '2-Chloropropane' } } ] },
+{ start: 'alcohol-3', end: 'alkyl-halide', title: '3° Alcohol to Alkyl Halide', details: 'HCl (conc.)', conditions: { above: 'HCl (conc.)', below: 'RT' }, examples: [ { reactant: { formula: '(CH₃)₃COH', name: 'tert-Butanol' }, product: { formula: '(CH₃)₃CCl', name: 'tert-Butyl chloride' } } ] },
+{ start: 'carboxylic-acid', end: 'alcohol-1', title: 'Carboxylic Acid to 1° Alcohol', details: '1. LiAlH₄, 2. H₃O⁺', conditions: { above: '1. LiAlH₄', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃COOH', name: 'Ethanoic Acid' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } } ] },
+{ start: 'ester', end: 'acid', title: 'Ester to Acid', details: 'H₂O, H⁺', conditions: { above: 'H₂O', below: 'H⁺, Heat' }, examples: [ { reactant: { formula: 'CH₃COOCH₃', name: 'Methyl acetate' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } } ] },
+{ start: 'grignard', end: 'alkane', title: 'Grignard to Alkane', details: 'H₂O work-up', conditions: { above: 'H₂O (or D₂O)', below: '' }, examples: [ { reactant: { formula: 'CH₃MgBr', name: 'Methylmagnesium Bromide' }, reagent: { formula: '+ H₂O' }, product: { formula: 'CH₄', name: 'Methane' } } ] },
+{ start: 'ether', end: 'alkyl-halide', title: 'Ether to Alkyl Halide', details: 'HI (conc.), heat', conditions: { above: 'HI (conc.)', below: 'Heat' }, examples: [ { reactant: { formula: 'CH₃OCH₃', name: 'Dimethyl Ether' }, product: { formula: 'CH₃I', name: 'Iodomethane' } } ] },
+{ start: 'ether', end: 'alcohol-1', title: 'Ether to 1° Alcohol', details: 'H₂O, H⁺, heat', conditions: { above: 'H₂O', below: 'H⁺, Heat' }, examples: [ { reactant: { formula: 'CH₃OCH₃', name: 'Dimethyl Ether' }, product: { formula: 'CH₃OH', name: 'Methanol' } } ] },
+{ start: 'alcohol-1', end: 'ether', title: '1° Alcohol to Ether', details: 'Conc. H₂SO₄, 140 °C', conditions: { above: 'Conc. H₂SO₄', below: '140 °C' }, examples: [ { reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃CH₂OCH₂CH₃', name: 'Diethyl Ether' } } ] },
+{ start: 'alcohol-2', end: 'alkene', title: '2° Alcohol to Alkene', details: 'Conc. H₂SO₄, 180 °C', conditions: { above: 'Conc. H₂SO₄', below: '180 °C' }, examples: [ { reactant: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' }, product: { formula: 'CH₃CH=CH₂', name: 'Propene' } } ] },
+{ start: 'alcohol-3', end: 'alkene', title: '3° Alcohol to Alkene', details: 'H₂SO₄, 50 °C', conditions: { above: 'H₂SO₄', below: '50 °C' }, examples: [ { reactant: { formula: '(CH₃)₃COH', name: 'tert-Butanol' }, product: { formula: '(CH₃)₂C=CH₂', name: 'Isobutene' } } ] },
+{ start: 'alkene', end: 'ether', title: 'Alkene to Ether', details: 'ROH, H⁺', conditions: { above: 'ROH', below: 'H⁺' }, examples: [ { reactant: { formula: 'CH₂=CH₂', name: 'Ethene' }, reagent: { formula: '+ CH₃OH' }, product: { formula: 'CH₃CH₂OCH₃', name: 'Ethyl Methyl Ether' } } ] },
+{ start: 'alkene', end: 'acid', title: 'Alkene to Carboxylic Acid', details: 'KMnO₄ (hot, conc.)', conditions: { above: 'KMnO₄ (hot, conc.)', below: 'H⁺, Heat' }, examples: [ { reactant: { formula: 'CH₃CH=CH₂', name: 'Propene' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } } ] },
+{ start: 'alkene', end: 'aldehyde', title: 'Alkene to Aldehyde', details: 'O₃, Me₂S', conditions: { above: 'O₃', below: 'Me₂S' }, examples: [ { reactant: { formula: 'CH₂=CH₂', name: 'Ethene' }, product: { formula: 'HCHO', name: 'Formaldehyde' } } ] },
+{ start: 'alkene', end: 'ketone', title: 'Alkene to Ketone', details: 'O₃, H₂O₂', conditions: { above: 'O₃', below: 'H₂O₂' }, examples: [ { reactant: { formula: '(CH₃)₂C=CH₂', name: '2-Methylpropene' }, product: { formula: 'CH₃COCH₃', name: 'Acetone' } } ] },
+{ start: 'alkyne', end: 'alkyl-halide', title: 'Alkyne to Alkyl Halide', details: 'HX (excess)', conditions: { above: 'HX (excess)', below: "Markovnikov's" }, examples: [ { reactant: { formula: 'CH₃C≡CH', name: 'Propyne' }, reagent: { formula: '+ 2 HBr' }, product: { formula: 'CH₃CBr₂CH₃', name: '2,2-Dibromopropane' } } ] },
+{ start: 'alkyne', end: 'acid', title: 'Alkyne to Carboxylic Acid', details: 'KMnO₄ (hot, conc.)', conditions: { above: 'KMnO₄ (hot, conc.)', below: 'H⁺, Heat' }, examples: [ { reactant: { formula: 'CH₃C≡CCH₃', name: '2-Butyne' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } } ] },
+{ start: 'amine', end: 'alkene', title: 'Amine to Alkene', details: 'Hofmann Elimination', conditions: { above: '1. CH₃I (excess)', below: '2. Ag₂O, Heat' }, examples: [ { reactant: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' }, product: { formula: 'CH₂=CH₂', name: 'Ethene' } } ] },
+{ start: 'aldehyde', end: 'alcohol-2', title: 'Aldehyde to 2° Alcohol', details: '1. RMgBr, 2. H₃O⁺', conditions: { above: '1. RMgBr', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, reagent: { formula: '+ CH₃MgBr' }, product: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' } } ] },
+{ start: 'ketone', end: 'alcohol-3', title: 'Ketone to 3° Alcohol', details: '1. RMgBr, 2. H₃O⁺', conditions: { above: '1. RMgBr', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃COCH₃', name: 'Acetone' }, reagent: { formula: '+ CH₃MgBr' }, product: { formula: '(CH₃)₃COH', name: 'tert-Butanol' } } ] },
+{ start: 'ester', end: 'alcohol-1', title: 'Ester to 1° Alcohol', details: '1. LiAlH₄, 2. H₃O⁺', conditions: { above: '1. LiAlH₄', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃COOCH₃', name: 'Methyl Acetate' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } } ] },
+{ start: 'ester', end: 'alcohol-3', title: 'Ester to 3° Alcohol', details: '1. 2 RMgBr, 2. H₃O⁺', conditions: { above: '1. 2 RMgBr', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃COOCH₃', name: 'Methyl Acetate' }, reagent: { formula: '+ 2 CH₃MgBr' }, product: { formula: '(CH₃)₃COH', name: 'tert-Butanol' } } ] },
+{ start: 'alkyl-halide', end: 'acid', title: 'Alkyl Halide to Carboxylic Acid', details: '1. Mg, 2. CO₂, 3. H₃O⁺', conditions: { above: '1. Mg, 2. CO₂', below: '3. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } } ] },
+{ start: 'grignard', end: 'acid', title: 'Grignard to Carboxylic Acid', details: '1. CO₂, 2. H₃O⁺', conditions: { above: '1. CO₂', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃MgBr', name: 'Methylmagnesium bromide' }, reagent: { formula: '+ CO₂' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } } ] },
+{ start: 'amine', end: 'alcohol-1', title: 'Amine to 1° Alcohol', details: 'NaNO₂/HCl (0–5 °C), H₂O', conditions: { above: 'NaNO₂, HCl', below: '0–5 °C' }, examples: [ { reactant: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } } ] },
+{ start: 'aldehyde', end: 'alkane', title: 'Aldehyde to Alkane', details: 'Zn(Hg), HCl (Clemmensen)', conditions: { above: 'Zn(Hg), HCl', below: 'Reflux' }, examples: [ { reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, product: { formula: 'CH₃CH₃', name: 'Ethane' } } ] },
+{ start: 'aldehyde', end: 'amine', title: 'Aldehyde to Amine', details: 'NH₃, H₂, Ni (reductive amination)', conditions: { above: 'NH₃', below: 'H₂, Ni' }, examples: [ { reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, reagent: { formula: '+ NH₃' }, product: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' } } ] },
+{ start: 'ketone', end: 'alkane', title: 'Ketone to Alkane', details: 'Zn(Hg), HCl (Clemmensen)', conditions: { above: 'Zn(Hg), HCl', below: 'Reflux' }, examples: [ { reactant: { formula: 'CH₃COCH₃', name: 'Acetone' }, product: { formula: 'CH₃CH₂CH₃', name: 'Propane' } } ] },
+{ start: 'ketone', end: 'amine', title: 'Ketone to Amine', details: 'NH₃, H₂, Ni (reductive amination)', conditions: { above: 'NH₃', below: 'H₂, Ni' }, examples: [ { reactant: { formula: 'CH₃COCH₃', name: 'Acetone' }, reagent: { formula: '+ NH₃' }, product: { formula: 'CH₃CH(NH₂)CH₃', name: 'Isopropylamine' } } ] },
+{ start: 'ester', end: 'aldehyde', title: 'Ester to Aldehyde', details: '1. DIBAL-H, 2. H₃O⁺', conditions: { above: '1. DIBAL-H', below: '2. H₃O⁺, −78 °C' }, examples: [ { reactant: { formula: 'CH₃COOCH₃', name: 'Methyl acetate' }, product: { formula: 'CH₃CHO', name: 'Ethanal' } } ] },
+{ start: 'acid', end: 'aldehyde', title: 'Carboxylic Acid to Aldehyde', details: '1. SOCl₂; 2. H₂, Pd/BaSO₄ (Rosenmund)', conditions: { above: '1. SOCl₂', below: '2. H₂, Pd/BaSO₄' }, examples: [ { reactant: { formula: 'CH₃COOH', name: 'Ethanoic Acid' }, product: { formula: 'CH₃CHO', name: 'Ethanal' } } ] },
+{ start: 'acid', end: 'alkane', title: 'Carboxylic Acid to Alkane', details: 'NaOH, CaO, Δ (soda-lime decarboxylation)', conditions: { above: 'NaOH, CaO', below: 'Δ' }, examples: [ { reactant: { formula: 'CH₃COOH', name: 'Ethanoic Acid' }, product: { formula: 'CH₄', name: 'Methane' } } ] },
+{ start: 'grignard', end: 'alcohol-1', title: 'Grignard to 1° Alcohol', details: '1. HCHO, 2. H₃O⁺', conditions: { above: '1. HCHO', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃MgBr', name: 'Methylmagnesium Bromide' }, reagent: { formula: '+ HCHO' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } } ] },
+{ start: 'grignard', end: 'ketone', title: 'Grignard to Ketone', details: '1. Acid chloride, 2. H₃O⁺', conditions: { above: '1. R-COCl', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃MgBr', name: 'Methylmagnesium Bromide' }, reagent: { formula: '+ CH₃COCl' }, product: { formula: 'CH₃COCH₃', name: 'Acetone' } } ] },
+{ start: 'ether', end: 'alcohol-2', title: 'Ether to 2° Alcohol', details: 'H₂O, H⁺, heat', conditions: { above: 'H₂O', below: 'H⁺, Heat' }, examples: [ { reactant: { formula: '(CH₃)₂CHOCH(CH₃)₂', name: 'Diisopropyl ether' }, product: { formula: 'CH₃CH(OH)CH₃', name: 'Isopropanol' } } ] },
+{ start: 'ether', end: 'alcohol-3', title: 'Ether to 3° Alcohol', details: 'H₂O, H⁺, heat', conditions: { above: 'H₂O', below: 'H⁺, Heat' }, examples: [ { reactant: { formula: 'CH₃OC(CH₃)₃', name: 'tert-Butyl methyl ether' }, product: { formula: '(CH₃)₃COH', name: 'tert-Butanol' } } ] },
+{ start: 'alcohol-1', end: 'ester', title: '1° Alcohol to Ester', details: 'R-COOH, H⁺', conditions: { above: 'R-COOH, H⁺', below: 'Heat' }, examples: [ { reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, reagent: { formula: '+ CH₃COOH' }, product: { formula: 'CH₃COOCH₂CH₃', name: 'Ethyl acetate' } } ] },
+{ start: 'alcohol-2', end: 'ester', title: '2° Alcohol to Ester', details: 'R-COCl, pyridine', conditions: { above: 'R-COCl', below: 'Pyridine' }, examples: [ { reactant: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' }, reagent: { formula: '+ CH₃COCl' }, product: { formula: 'CH₃COOCH(CH₃)CH₃', name: 'Isopropyl acetate' } } ] },
+{ start: 'alcohol-2', end: 'amine', title: '2° Alcohol to Amine', details: '1. TsCl, pyridine; 2. NH₃', conditions: { above: '1. TsCl, pyridine', below: '2. NH₃' }, examples: [ { reactant: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' }, product: { formula: 'CH₃CH(NH₂)CH₃', name: 'Isopropylamine' } } ] },
+{ start: 'alcohol-3', end: 'ester', title: '3° Alcohol to Ester', details: 'R-COCl, pyridine', conditions: { above: 'R-COCl', below: 'Pyridine' }, examples: [ { reactant: { formula: '(CH₃)₃COH', name: 'tert-Butanol' }, reagent: { formula: '+ CH₃COCl' }, product: { formula: 'CH₃COOC(CH₃)₃', name: 'tert-Butyl acetate' } } ] },
+{ start: 'alcohol-3', end: 'amine', title: '3° Alcohol to Amine', details: '1. HCl (conc.); 2. NH₃', conditions: { above: '1. HCl (conc.)', below: '2. NH₃ (excess)' }, examples: [ { reactant: { formula: '(CH₃)₃COH', name: 'tert-Butanol' }, product: { formula: '(CH₃)₃CNH₂', name: 'tert-Butylamine' } } ] },
+{ start: 'amine', end: 'alkyl-halide', title: 'Amine to Alkyl Halide', details: 'NaNO₂/HCl (0–5 °C), CuBr', conditions: { above: 'NaNO₂, HCl (0–5 °C)', below: 'CuBr' }, examples: [ { reactant: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' }, product: { formula: 'CH₃CH₂Br', name: 'Bromoethane' } } ] },
+{ start: 'acid', end: 'amine', title: 'Carboxylic Acid to Amine', details: '1. SOCl₂; 2. NH₃; 3. LiAlH₄', conditions: { above: '1. SOCl₂, 2. NH₃', below: '3. LiAlH₄' }, examples: [ { reactant: { formula: 'CH₃COOH', name: 'Ethanoic Acid' }, product: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' } } ] },
+{ start: 'ester', end: 'ketone', title: 'Ester to Ketone', details: '1. R₂CuLi, 2. H₃O⁺', conditions: { above: '1. R₂CuLi', below: '2. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃COOCH₃', name: 'Methyl acetate' }, reagent: { formula: '+ (CH₃)₂CuLi' }, product: { formula: 'CH₃COCH₃', name: 'Acetone' } } ] },
+{ start: 'ketone', end: 'ester', title: 'Ketone to Ester', details: 'mCPBA (Baeyer–Villiger)', conditions: { above: 'mCPBA', below: '' }, examples: [ { reactant: { formula: 'CH₃COCH₃', name: 'Acetone' }, product: { formula: 'CH₃COOCH₃', name: 'Methyl acetate' } } ] },
+{ start: 'amine', end: 'alkane', title: 'Amine to Alkane', details: 'NaNO₂/HCl, then H₃PO₂', conditions: { above: '1. NaNO₂, HCl', below: '2. H₃PO₂' }, examples: [ { reactant: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' }, product: { formula: 'CH₃CH₃', name: 'Ethane' } } ] },
+{ start: 'alcohol-1', end: 'amine', title: '1° Alcohol to Amine', details: '1. TsCl, pyridine; 2. NH₃', conditions: { above: '1. TsCl, pyridine', below: '2. NH₃' }, examples: [ { reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' } } ] },
+{ start: 'alkene', end: 'amine', title: 'Alkene to Amine', details: 'NH₃, H₂SO₄ (hydroamination)', conditions: { above: 'NH₃', below: 'H₂SO₄, Heat' }, examples: [ { reactant: { formula: 'CH₂=CH₂', name: 'Ethene' }, reagent: { formula: '+ NH₃' }, product: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' } } ] },
+{ start: 'alcohol-2', end: 'ether', title: '2° Alcohol to Ether', details: 'Conc. H₂SO₄, 140 °C', conditions: { above: 'Conc. H₂SO₄', below: '140 °C' }, examples: [ { reactant: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' }, product: { formula: '(CH₃)₂CHOCH(CH₃)₂', name: 'Diisopropyl Ether' } } ] },
+{ start: 'alcohol-3', end: 'ether', title: '3° Alcohol to Ether', details: 'ROH, H⁺', conditions: { above: 'ROH', below: 'H⁺, 0 °C' }, examples: [ { reactant: { formula: '(CH₃)₃COH', name: 'tert-Butanol' }, reagent: { formula: '+ CH₃OH' }, product: { formula: 'CH₃OC(CH₃)₃', name: 'tert-Butyl Methyl Ether' } } ] },
+{ start: 'ketone', end: 'acid', title: 'Ketone to Carboxylic Acid', details: 'KMnO₄ (hot, conc.)', conditions: { above: 'KMnO₄ (hot, conc.)', below: 'H⁺, Heat' }, examples: [ { reactant: { formula: 'CH₃COCH₃', name: 'Acetone' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } } ] },
+{ start: 'alkyl-halide', end: 'alkyne', title: 'Alkyl Halide to Alkyne', details: 'NaNH₂, HC≡C⁻ (acetylide)', conditions: { above: 'HC≡C⁻, NaNH₂', below: 'SN2' }, examples: [ { reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, reagent: { formula: '+ HC≡C⁻ Na⁺' }, product: { formula: 'CH₃CH₂C≡CH', name: '1-Butyne' } } ] },
+{ start: 'acid', end: 'alkyl-halide', title: 'Carboxylic Acid to Alkyl Halide', details: 'Ag salt, Br₂, Δ (Hunsdiecker)', conditions: { above: 'AgOOCR, Br₂', below: 'Δ (Hunsdiecker)' }, examples: [ { reactant: { formula: 'CH₃CH₂COOH', name: 'Propanoic Acid' }, product: { formula: 'CH₃CH₂Br', name: 'Bromoethane' } } ] },
+{ start: 'acid', end: 'ketone', title: 'Carboxylic Acid to Ketone', details: '1. SOCl₂; 2. Me₂CuLi, −78 °C', conditions: { above: '1. SOCl₂', below: '2. Me₂CuLi, −78 °C' }, examples: [ { reactant: { formula: 'CH₃COOH', name: 'Ethanoic Acid' }, reagent: { formula: '+ (CH₃)₂CuLi' }, product: { formula: 'CH₃COCH₃', name: 'Acetone' } } ] },
+{ start: 'aldehyde', end: 'ester', title: 'Aldehyde to Ester', details: 'Al(OR)₃ (Tishchenko)', conditions: { above: 'Al(OR)₃', below: 'Tishchenko' }, examples: [ { reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, reagent: { formula: '+ CH₃CHO' }, product: { formula: 'CH₃COOCH₂CH₃', name: 'Ethyl acetate' } } ] },
+{ start: 'alkene', end: 'ester', title: 'Alkene to Ester', details: 'CO, ROH, PdCl₂/CuCl₂', conditions: { above: 'CO, ROH', below: 'PdCl₂/CuCl₂' }, examples: [ { reactant: { formula: 'CH₂=CH₂', name: 'Ethene' }, reagent: { formula: '+ CO, + CH₃OH' }, product: { formula: 'CH₃CH₂COOCH₃', name: 'Methyl propionate' } } ] },
+{ start: 'alkane', end: 'alcohol-1', title: 'Alkane to 1° Alcohol', details: 'O₂, Mo/FeO, 250 °C', conditions: { above: 'O₂', below: 'Mo/FeO, 250 °C' }, examples: [ { reactant: { formula: 'CH₄', name: 'Methane' }, product: { formula: 'CH₃OH', name: 'Methanol' } } ] },
+{ start: 'alkane', end: 'acid', title: 'Alkane to Carboxylic Acid', details: 'KMnO₄ (hot, conc.), H⁺', conditions: { above: 'KMnO₄ (hot, conc.)', below: 'H⁺, Heat' }, examples: [ { reactant: { formula: 'CH₃CH₂CH₃', name: 'Propane' }, product: { formula: 'CH₃COOH', name: 'Ethanoic Acid' } } ] },
+{ start: 'alkane', end: 'alcohol-2', title: 'Alkane to 2° Alcohol', details: 'O₂, V₂O₅, 300 °C', conditions: { above: 'O₂', below: 'V₂O₅, 300 °C' }, examples: [ { reactant: { formula: 'CH₃CH₂CH₃', name: 'Propane' }, product: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' } } ] },
+{ start: 'alkane', end: 'alcohol-3', title: 'Alkane to 3° Alcohol', details: 'O₂, Co/Mn, 150 °C', conditions: { above: 'O₂', below: 'Co/Mn, 150 °C' }, examples: [ { reactant: { formula: '(CH₃)₃CH', name: 'Isobutane' }, product: { formula: '(CH₃)₃COH', name: 'tert-Butanol' } } ] },
+{ start: 'alkene', end: 'alkyne', title: 'Alkene to Alkyne', details: '1. Br₂/CCl₄, 2. 2 NaNH₂', conditions: { above: '1. Br₂/CCl₄', below: '2. 2 NaNH₂' }, examples: [ { reactant: { formula: 'CH₃CH=CH₂', name: 'Propene' }, product: { formula: 'CH₃C≡CH', name: 'Propyne' } } ] },
+{ start: 'aldehyde', end: 'alkyl-halide', title: 'Aldehyde to Alkyl Halide', details: 'PCl₅', conditions: { above: 'PCl₅', below: '' }, examples: [ { reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, product: { formula: 'CH₃CHCl₂', name: '1,1-Dichloroethane' } } ] },
+{ start: 'ketone', end: 'alkyl-halide', title: 'Ketone to Alkyl Halide', details: 'PCl₅', conditions: { above: 'PCl₅', below: '' }, examples: [ { reactant: { formula: 'CH₃COCH₃', name: 'Acetone' }, product: { formula: 'CH₃CCl₂CH₃', name: '2,2-Dichloropropane' } } ] },
+{ start: 'ester', end: 'alkyl-halide', title: 'Ester to Alkyl Halide', details: 'HI (conc.), Δ', conditions: { above: 'HI (conc.)', below: 'Δ' }, examples: [ { reactant: { formula: 'CH₃COOCH₃', name: 'Methyl acetate' }, product: { formula: 'CH₃I', name: 'Iodomethane' } } ] },
+{ start: 'alcohol-1', end: 'grignard', title: '1° Alcohol to Grignard', details: '1. PBr₃, 2. Mg, dry ether', conditions: { above: '1. PBr₃', below: '2. Mg, dry ether' }, examples: [ { reactant: { formula: 'CH₃CH₂OH', name: 'Ethanol' }, product: { formula: 'CH₃CH₂MgBr', name: 'Ethylmagnesium Bromide' } } ] },
+{ start: 'alcohol-2', end: 'grignard', title: '2° Alcohol to Grignard', details: '1. PBr₃, 2. Mg, dry ether', conditions: { above: '1. PBr₃', below: '2. Mg, dry ether' }, examples: [ { reactant: { formula: 'CH₃CH(OH)CH₃', name: 'Propan-2-ol' }, product: { formula: 'CH₃CH(MgBr)CH₃', name: 'Isopropylmagnesium Bromide' } } ] },
+{ start: 'alcohol-3', end: 'grignard', title: '3° Alcohol to Grignard', details: '1. HCl (conc.), 2. Mg, dry ether', conditions: { above: '1. HCl (conc.)', below: '2. Mg, dry ether' }, examples: [ { reactant: { formula: '(CH₃)₃COH', name: 'tert-Butanol' }, product: { formula: '(CH₃)₃CMgCl', name: 'tert-Butylmagnesium Chloride' } } ] },
+{ start: 'alkyl-halide', end: 'aldehyde', title: 'Alkyl Halide to Aldehyde', details: '1. NaCN, 2. DIBAL-H, 3. H₃O⁺', conditions: { above: '1. NaCN', below: '2. DIBAL-H, 3. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, product: { formula: 'CH₃CH₂CHO', name: 'Propanal' } } ] },
+{ start: 'acid', end: 'alcohol-3', title: 'Carboxylic Acid to 3° Alcohol', details: '1. SOCl₂; 2. 2 CH₃MgBr; 3. H₃O⁺', conditions: { above: '1. SOCl₂, 2. 2 CH₃MgBr', below: '3. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃COOH', name: 'Ethanoic Acid' }, reagent: { formula: '+ 2 CH₃MgBr' }, product: { formula: '(CH₃)₃COH', name: 'tert-Butanol' } } ] },
+{ start: 'aldehyde', end: 'alkene', title: 'Aldehyde to Alkene', details: 'Ph₃P=CH₂ (Wittig)', conditions: { above: 'Ph₃P=CH₂', below: '' }, examples: [ { reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, reagent: { formula: '+ Ph₃P=CH₂' }, product: { formula: 'CH₃CH=CH₂', name: 'Propene' } } ] },
+{ start: 'ketone', end: 'alkene', title: 'Ketone to Alkene', details: 'Ph₃P=CH₂ (Wittig)', conditions: { above: 'Ph₃P=CH₂', below: '' }, examples: [ { reactant: { formula: 'CH₃COCH₃', name: 'Acetone' }, reagent: { formula: '+ Ph₃P=CH₂' }, product: { formula: '(CH₃)₂C=CH₂', name: 'Isobutene' } } ] },
+{ start: 'aldehyde', end: 'alkyne', title: 'Aldehyde to Alkyne', details: '1. CBr₄/PPh₃; 2. 2 NaNH₂ (Corey–Fuchs)', conditions: { above: '1. CBr₄/PPh₃', below: '2. 2 NaNH₂' }, examples: [ { reactant: { formula: 'CH₃CHO', name: 'Ethanal' }, reagent: { formula: '+ CBr₄/PPh₃, 2 NaNH₂' }, product: { formula: 'CH₃C≡CH', name: 'Propyne' } } ] },
+{ start: 'amine', end: 'ketone', title: 'Amine to Ketone', details: 'NaOCl, TEMPO (oxidative deamination)', conditions: { above: 'NaOCl', below: 'TEMPO, 25 °C' }, examples: [ { reactant: { formula: 'CH₃CH(NH₂)CH₃', name: 'Isopropylamine' }, product: { formula: 'CH₃COCH₃', name: 'Acetone' } } ] },
+{ start: 'amine', end: 'aldehyde', title: 'Amine to Aldehyde', details: 'IBX, DMSO (oxidative deamination)', conditions: { above: 'IBX', below: 'DMSO, 25 °C' }, examples: [ { reactant: { formula: 'CH₃CH₂NH₂', name: 'Ethylamine' }, product: { formula: 'CH₃CHO', name: 'Ethanal' } } ] },
+{ start: 'alkyl-halide', end: 'ketone', title: 'Alkyl Halide to Ketone', details: '1. NaCN, 2. R′MgBr, 3. H₃O⁺', conditions: { above: '1. NaCN', below: '2. R′MgBr, 3. H₃O⁺' }, examples: [ { reactant: { formula: 'CH₃CH₂Br', name: 'Bromoethane' }, reagent: { formula: '+ CH₃MgBr' }, product: { formula: 'CH₃COCH₂CH₃', name: 'Butan-2-one' } } ] },
+{ start: 'alkyne', end: 'alcohol-1', title: 'Alkyne to 1° Alcohol', details: '1. (Sia)₂BH, 2. H₂O₂/⁻OH, 3. NaBH₄', conditions: { above: '1. (Sia)₂BH', below: '2. H₂O₂, ⁻OH; 3. NaBH₄' }, examples: [ { reactant: { formula: 'CH≡CH', name: 'Ethyne' }, product: { formula: 'CH₃CH₂OH', name: 'Ethanol' } } ] }
+    ];
 
     let selectedReactant = null;
     let nodes = {};
+    let activePath = null;
+    let draggedNode = null;
+    let draggedNodeKey = null;
+    let initialX, initialY, nodeStartX, nodeStartY;
 
+    const mapWrapper = document.getElementById('map-wrapper');
     const mapContainer = document.getElementById('map-container');
     const instructionText = document.getElementById('instruction-text');
-    const pathForward = document.getElementById('reaction-path-forward');
-    const pathReverse = document.getElementById('reaction-path-reverse');
-    const midArrowForward = document.getElementById('mid-arrow-forward');
-    const midArrowReverse = document.getElementById('mid-arrow-reverse');
-    const textForward = document.getElementById('text-forward');
-    const textReverse = document.getElementById('text-reverse');
+    const finalPathsContainer = document.getElementById('final-paths-container');
+    const previewPathsContainer = document.getElementById('preview-paths-container');
     const modalOverlay = document.getElementById('modal-overlay');
     const exampleCard = document.getElementById('example-card');
     const exampleTitle = document.getElementById('example-title');
     const exampleList = document.getElementById('example-list');
     const closeModalBtn = document.getElementById('close-modal');
+    const centerNodeBtn = document.getElementById('center-node-btn');
+    const resetLayoutBtn = document.getElementById('reset-layout-btn');
+    const zoomInBtn = document.getElementById('zoom-in-btn');
+    const zoomOutBtn = document.getElementById('zoom-out-btn');
+    const increaseSpacingBtn = document.getElementById('increase-spacing-btn');
+    const decreaseSpacingBtn = document.getElementById('decrease-spacing-btn');
 
-    let forwardClickHandler = null;
-    let reverseClickHandler = null;
+    let scale = 1;
+    let minScale = 0.2;
+    let maxScale = 2.0;
+    let pan = { x: 0, y: 0 };
+    let currentRadius = DEFAULT_RADIUS;
+    let isPanning = false;
+    let panStart = { x: 0, y: 0, panX: 0, panY: 0 };
+    let hasPanned = false;
 
     function initializeMap() {
-        Object.keys(compounds).forEach(key => {
+        repositionNodes();
+
+        Object.keys(baseCompounds).forEach(key => {
             const nodeEl = document.createElement('div');
-            nodeEl.className = 'node ' + compounds[key].color;
+            nodeEl.className = 'node ' + baseCompounds[key].color;
             nodeEl.style.top = compounds[key].position.top;
             nodeEl.style.left = compounds[key].position.left;
             nodeEl.dataset.type = key;
-            nodeEl.innerHTML = `<span>${compounds[key].name}</span>`;
+            nodeEl.innerHTML = `<span class="node-label">${baseCompounds[key].name}</span>`;
             mapContainer.appendChild(nodeEl);
             nodes[key] = nodeEl;
-            nodeEl.addEventListener('click', (e) => { e.stopPropagation(); onNodeClick(key); });
+            
+            nodeEl.addEventListener('mousedown', (e) => onDragStart(e, key));
+            nodeEl.addEventListener('touchstart', (e) => onDragStart(e, key), { passive: false });
         });
         
-        closeModalBtn.addEventListener('click', hideExamplePopup);
-        modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) hideExamplePopup(); });
+        closeModalBtn.addEventListener('click', (e) => { e.stopPropagation(); hideExamplePopup(); });
+        modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) { e.stopPropagation(); hideExamplePopup(); } });
+        centerNodeBtn.addEventListener('click', onCenterNode);
+        resetLayoutBtn.addEventListener('click', resetLayout);
+        zoomInBtn.addEventListener('click', zoomIn);
+        zoomOutBtn.addEventListener('click', zoomOut);
+        
+        // Continuous press for spacing buttons
+        setupContinuousPress(increaseSpacingBtn, increaseSpacing);
+        setupContinuousPress(decreaseSpacingBtn, decreaseSpacing);
+
+        // Panning listeners
+        mapWrapper.addEventListener('mousedown', onPanStart);
+        mapWrapper.addEventListener('mousemove', onPanMove);
+        mapWrapper.addEventListener('mouseup', onPanEnd);
+        mapWrapper.addEventListener('mouseleave', onPanEnd);
+        mapWrapper.addEventListener('touchstart', onPanStart, { passive: false });
+        mapWrapper.addEventListener('touchmove', onPanMove, { passive: false });
+        mapWrapper.addEventListener('touchend', onPanEnd);
+
+
+        mapWrapper.addEventListener('click', (e) => {
+            if (!hasPanned && !e.target.closest('.node') && !e.target.closest('.reaction-text') && !e.target.closest('#example-card')) {
+                resetSelection();
+            }
+        });
+
+        // Zoom and Pan event listeners
+        mapWrapper.addEventListener('wheel', handleWheel, { passive: false });
+        mapWrapper.addEventListener('dblclick', resetZoomAndPan);
+    }
+
+    function setupContinuousPress(button, action) {
+        let intervalId = null;
+
+        const startAction = (e) => {
+            e.preventDefault();
+            if (intervalId !== null) return;
+            button.classList.add('active');
+            action();
+            intervalId = setInterval(action, 50);
+        };
+
+        const stopAction = () => {
+            if (intervalId === null) return;
+            button.classList.remove('active');
+            clearInterval(intervalId);
+            intervalId = null;
+        };
+
+        button.addEventListener('mousedown', startAction);
+        button.addEventListener('touchstart', startAction, { passive: false });
+
+        button.addEventListener('mouseup', stopAction);
+        button.addEventListener('mouseleave', stopAction);
+        button.addEventListener('touchend', stopAction);
+        button.addEventListener('touchcancel', stopAction);
+    }
+
+    function repositionNodes() {
+        const centerX = 44;
+        const centerY = 44;
+        
+        const outerNodeKeys = Object.keys(baseCompounds).filter(k => k !== centerNodeKey);
+        
+        // Ensure compounds object is populated before positioning
+        if (Object.keys(compounds).length === 0) {
+             Object.keys(baseCompounds).forEach(key => {
+                compounds[key] = { ...baseCompounds[key], position: { top: '0%', left: '0%' } };
+            });
+        }
+        
+        compounds[centerNodeKey].position = { top: `${centerY}%`, left: `${centerX}%` };
+        outerNodeKeys.forEach((key, i) => {
+            const angle = (i / outerNodeKeys.length) * 2 * Math.PI - (Math.PI / 2);
+            const x = centerX + currentRadius * Math.cos(angle);
+            const y = centerY + currentRadius * Math.sin(angle);
+            compounds[key].position = { top: `${y}%`, left: `${x}%` };
+        });
+
+        Object.keys(nodes).forEach(key => {
+            const nodeEl = nodes[key];
+            if (nodeEl) {
+                nodeEl.style.top = compounds[key].position.top;
+                nodeEl.style.left = compounds[key].position.left;
+            }
+        });
+        redrawCurrentPaths(true);
     }
 
     function onNodeClick(type) {
-        if (pathForward.style.opacity === '1' || pathReverse.style.opacity === '1') {
+        // If a final path is already drawn, a click on any node should reset and start a new selection.
+        if (activePath) {
             resetSelection();
+            selectNodeAsReactant(type);
+            return;
         }
 
+        // If there is NO reactant selected yet, this is the first click.
         if (!selectedReactant) {
-            selectedReactant = type;
-            nodes[type].classList.add('selected');
-            instructionText.textContent = `Selected ${compounds[type].name}. Now, choose a product.`;
-            highlightPossibleProducts();
-        } else {
-            const product = type;
-            if (product === selectedReactant) { resetSelection(); return; }
-            
-            const forwardReaction = reactions[`${selectedReactant}-${product}`];
-            const reverseReaction = reactions[`${product}-${selectedReactant}`];
-
-            if (forwardReaction || reverseReaction) {
-                drawReactionPaths(selectedReactant, product);
-            } else {
-                instructionText.textContent = `No direct reaction to ${compounds[product].name}. Try another.`;
-                nodes[product].style.animation = 'shake 0.5s';
-                setTimeout(() => nodes[product].style.animation = '', 500);
-            }
+            selectNodeAsReactant(type);
+            return;
         }
+
+        // If we are here, a reactant IS selected. This is the second click.
+
+        // If the user clicks the same selected node again, deselect it.
+        if (type === selectedReactant) {
+            resetSelection();
+            return;
+        }
+
+        // This is the second click on a DIFFERENT node. Check if it's a possible product.
+        const productNode = nodes[type];
+        if (productNode.classList.contains('possible-product')) {
+            // A valid reaction path was found. Draw it.
+            mapContainer.classList.remove('focus-mode');
+            Object.values(nodes).forEach(node => node.classList.remove('possible-product'));
+            drawFinalReactionPaths(selectedReactant, type);
+        } else {
+            // No reaction between the two, or clicked a dimmed node. Treat this as a new selection.
+            resetSelection();
+            selectNodeAsReactant(type);
+        }
+    }
+
+    function selectNodeAsReactant(type) {
+        resetSelection(); // Start fresh
+
+        selectedReactant = type;
+        nodes[type].classList.add('selected');
+        mapContainer.classList.add('focus-mode');
+        
+        highlightPossibleProducts(); // Find and mark nodes
+
+        instructionText.textContent = `Selected ${compounds[type].name}. Now, choose a product.`;
+        centerNodeBtn.classList.remove('hidden');
     }
 
     function highlightPossibleProducts() {
         Object.keys(nodes).forEach(key => {
             if (key === selectedReactant) return;
-            if (reactions[`${selectedReactant}-${key}`] || reactions[`${key}-${selectedReactant}`]) {
+            const isPossible = reactions.some(r => (r.start === selectedReactant && r.end === key) || (r.start === key && r.end === selectedReactant));
+            if (isPossible) {
                 nodes[key].classList.add('possible-product');
             }
         });
     }
 
-    function drawReactionPaths(reactantKey, productKey) {
-        const reactantNode = nodes[reactantKey];
-        const productNode = nodes[productKey];
-        
-        const start = { x: reactantNode.offsetLeft + reactantNode.offsetWidth / 2, y: reactantNode.offsetTop + reactantNode.offsetHeight / 2 };
-        const end = { x: productNode.offsetLeft + productNode.offsetWidth / 2, y: productNode.offsetTop + productNode.offsetHeight / 2 };
+    function onDragStart(e, key) {
+        if (e.type === 'touchstart' && e.touches.length > 1) {
+            return;
+        }
+        e.preventDefault();
+        draggedNode = nodes[key];
+        draggedNodeKey = key;
+        draggedNode.classList.add('dragging');
+        const clientX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX;
+        const clientY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
+        initialX = clientX;
+        initialY = clientY;
+        nodeStartX = draggedNode.offsetLeft;
+        nodeStartY = draggedNode.offsetTop;
+        document.addEventListener('mousemove', onDragMove);
+        document.addEventListener('mouseup', onDragEnd);
+        document.addEventListener('touchmove', onDragMove, { passive: false });
+        document.addEventListener('touchend', onDragEnd);
+    }
 
+    function onDragMove(e) {
+        if (!draggedNode) return;
+        e.preventDefault();
+        const clientX = e.type === 'touchmove' ? e.touches[0].clientX : e.clientX;
+        const clientY = e.type === 'touchmove' ? e.touches[0].clientY : e.clientY;
+        const dx = clientX - initialX;
+        const dy = clientY - initialY;
+        draggedNode.style.left = `${nodeStartX + dx}px`;
+        draggedNode.style.top = `${nodeStartY + dy}px`;
+        redrawCurrentPaths(true);
+    }
+
+    function onDragEnd(e) {
+        const wasDragged = (draggedNode && (Math.abs(draggedNode.offsetLeft - nodeStartX) > 5 || Math.abs(draggedNode.offsetTop - nodeStartY) > 5));
+        
+        const key = draggedNodeKey; 
+
+        if (draggedNode) {
+            draggedNode.classList.remove('dragging');
+        }
+        
+        draggedNode = null;
+        draggedNodeKey = null;
+        
+        document.removeEventListener('mousemove', onDragMove);
+        document.removeEventListener('mouseup', onDragEnd);
+        document.removeEventListener('touchmove', onDragMove);
+        document.removeEventListener('touchend', onDragEnd);
+
+        if (!wasDragged && key) {
+            onNodeClick(key);
+        }
+    }
+    
+    function onCenterNode() {
+        if (!selectedReactant || selectedReactant === centerNodeKey) return;
+        
+        const oldCenterKey = centerNodeKey;
+        centerNodeKey = selectedReactant;
+        
+        repositionNodes();
+        resetSelection();
+        selectNodeAsReactant(centerNodeKey); // Reselect the new center node
+    }
+
+    function redrawCurrentPaths(isDrag) {
+        finalPathsContainer.innerHTML = '';
+        if (activePath) {
+            drawFinalReactionPaths(activePath.nodeA, activePath.nodeB, isDrag);
+        }
+    }
+    
+    function drawArrowAndText(container, startKey, endKey, direction, unitNormal, reaction, isPreview, isRedraw) {
+        const startNode = nodes[startKey];
+        const endNode = nodes[endKey];
+        const centerStart = { x: startNode.offsetLeft + NODE_RADIUS, y: startNode.offsetTop + NODE_RADIUS };
+        const centerEnd = { x: endNode.offsetLeft + NODE_RADIUS, y: endNode.offsetTop + NODE_RADIUS };
+        const dxOriginal = centerEnd.x - centerStart.x;
+        const dyOriginal = centerEnd.y - centerStart.y;
+        const distance = Math.sqrt(dxOriginal * dxOriginal + dyOriginal * dyOriginal);
+        if (distance === 0) return;
+        const unitDx = dxOriginal / distance;
+        const unitDy = dyOriginal / distance;
+        const radius = NODE_RADIUS;
+        const padding = 5;
+        const offsetFromCenter = radius + padding;
+        const startPoint = { x: centerStart.x + unitDx * offsetFromCenter, y: centerStart.y + unitDy * offsetFromCenter };
+        const endPoint = { x: centerEnd.x - unitDx * offsetFromCenter, y: centerEnd.y - unitDy * offsetFromCenter };
+        
+        const pathInfo = calculatePath(startPoint, endPoint, direction, unitNormal, startKey, endKey);
+        
+        const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        pathEl.setAttribute('d', pathInfo.pathData);
+        pathEl.style.stroke = direction === 1 ? 'var(--forward-arrow)' : 'var(--reverse-arrow)';
+        pathEl.setAttribute('marker-end', direction === 1 ? 'url(#arrowhead-forward)' : 'url(#arrowhead-reverse)');
+        pathEl.classList.add('reaction-path');
+        
+        const midArrowEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        const arrowShape = 'M -6 -4 L 5 0 L -6 4 Z';
+        midArrowEl.setAttribute('d', arrowShape);
+        midArrowEl.setAttribute('transform', `translate(${pathInfo.midPoint.x}, ${pathInfo.midPoint.y}) rotate(${pathInfo.angle})`);
+        midArrowEl.style.fill = direction === 1 ? 'var(--forward-arrow)' : 'var(--reverse-arrow)';
+        midArrowEl.classList.add('mid-arrow');
+
+        const textEl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        let textAngle = pathInfo.angle;
+        if (Math.abs(textAngle) > 90) textAngle += 180;
+        textEl.textContent = reaction.details;
+        textEl.setAttribute('transform', `translate(${pathInfo.midPoint.x}, ${pathInfo.midPoint.y}) rotate(${textAngle})`);
+        textEl.setAttribute('dy', '-15');
+        textEl.style.fill = direction === 1 ? 'var(--forward-arrow)' : 'var(--reverse-arrow)';
+        textEl.classList.add('reaction-text');
+        textEl.style.fontSize = `${12 / scale}px`;
+        
+        const clickHandler = (e) => {
+            // If it's a touch event, we need special handling
+            if (e.type === 'touchend') {
+                // Prevent the emulated click event that follows touchend
+                e.preventDefault(); 
+                e.stopPropagation();
+                // If the user was panning, don't show the popup.
+                if (hasPanned) {
+                    return;
+                }
+            } else { // For 'click' events
+                 e.stopPropagation();
+            }
+            
+            showExamplePopup(reaction);
+        };
+
+        textEl.addEventListener('click', clickHandler);
+        textEl.addEventListener('touchend', clickHandler);
+
+        container.appendChild(pathEl);
+        container.appendChild(midArrowEl);
+        container.appendChild(textEl);
+        
+        const opacity = '1';
+        if (isRedraw) {
+             pathEl.style.opacity = opacity;
+             midArrowEl.style.opacity = opacity;
+             textEl.style.opacity = opacity;
+        } else {
+            setTimeout(() => {
+                pathEl.style.opacity = opacity;
+                midArrowEl.style.opacity = opacity;
+                textEl.style.opacity = opacity;
+            }, 10);
+        }
+    }
+
+    function calculatePath(start, end, direction, unitNormal, reactantKey, productKey) {
         const dx = end.x - start.x;
         const dy = end.y - start.y;
-        const normal = { x: -dy, y: dx };
-        const normLength = Math.sqrt(normal.x * normal.x + normal.y * normal.y);
-        const unitNormal = { x: normal.x / normLength, y: normal.y / normLength };
-        const offset = 35;
+        
+        let offset = 40 * direction;
+        let pathIsObstructed = true;
+        let attempts = 0;
+        let cp1, cp2;
 
-        const forwardKey = `${reactantKey}-${productKey}`;
-        const reverseKey = `${productKey}-${reactantKey}`;
-        const forwardReaction = reactions[forwardKey];
-        const reverseReaction = reactions[reverseKey];
+        while (pathIsObstructed && attempts < 10) {
+            pathIsObstructed = false;
+            cp1 = { x: start.x + dx * 0.25 + unitNormal.x * offset, y: start.y + dy * 0.25 + unitNormal.y * offset };
+            cp2 = { x: end.x - dx * 0.25 + unitNormal.x * offset, y: end.y - dy * 0.25 + unitNormal.y * offset };
 
-        const arrowShape = 'M -6 -4 L 5 0 L -6 4 Z';
+            for (const key in nodes) {
+                if (key === reactantKey || key === productKey) continue;
+                const obstacleNode = nodes[key];
+                const obstacleCenter = { x: obstacleNode.offsetLeft + NODE_RADIUS, y: obstacleNode.offsetTop + NODE_RADIUS };
+                const obstacleRadius = NODE_RADIUS + 15;
 
-        if (forwardReaction) {
-            const control = { x: (start.x + end.x) / 2 + unitNormal.x * offset, y: (start.y + end.y) / 2 + unitNormal.y * offset };
-            pathForward.setAttribute('d', `M ${start.x},${start.y} Q ${control.x},${control.y} ${end.x},${end.y}`);
-            pathForward.style.opacity = '1';
-            
-            const tangentVector = { x: (control.x - start.x) + (end.x - control.x), y: (control.y - start.y) + (end.y - control.y) };
-            let angle = Math.atan2(tangentVector.y, tangentVector.x) * (180 / Math.PI);
-            const midPoint = { x: 0.25 * start.x + 0.5 * control.x + 0.25 * end.x, y: 0.25 * start.y + 0.5 * control.y + 0.25 * end.y };
-            
-            midArrowForward.setAttribute('d', arrowShape);
-            midArrowForward.setAttribute('transform', `translate(${midPoint.x}, ${midPoint.y}) rotate(${angle})`);
-            midArrowForward.style.opacity = '1';
-            
-            if (Math.abs(angle) > 90) angle += 180;
-            textForward.textContent = forwardReaction.details;
-            textForward.setAttribute('transform', `translate(${midPoint.x}, ${midPoint.y}) rotate(${angle})`);
-            forwardClickHandler = () => showExamplePopup(forwardReaction);
-            textForward.addEventListener('click', forwardClickHandler);
-            textForward.style.opacity = '1';
+                for (let t = 0.1; t < 1; t += 0.1) {
+                    const p = getPointOnCubicBezier(t, start, cp1, cp2, end);
+                    const dist = Math.sqrt(Math.pow(p.x - obstacleCenter.x, 2) + Math.pow(p.y - obstacleCenter.y, 2));
+                    if (dist < obstacleRadius) {
+                        pathIsObstructed = true;
+                        break;
+                    }
+                }
+                if (pathIsObstructed) break;
+            }
+            if (pathIsObstructed) {
+                offset += 20 * direction;
+                attempts++;
+            }
+        }
+
+        const pathData = `M ${start.x},${start.y} C ${cp1.x},${cp1.y} ${cp2.x},${cp2.y} ${end.x},${end.y}`;
+        const midPoint = getPointOnCubicBezier(0.5, start, cp1, cp2, end);
+        const tangent = getTangentOnCubicBezier(0.5, start, cp1, cp2, end);
+        const angle = Math.atan2(tangent.y, tangent.x) * (180 / Math.PI);
+
+        return { pathData, midPoint, angle };
+    }
+
+    function drawFinalReactionPaths(nodeAKey, nodeBKey, isRedraw = false) {
+        if (!isRedraw) {
+            activePath = { nodeA: nodeAKey, nodeB: nodeBKey };
         }
         
+        finalPathsContainer.innerHTML = '';
+        mapContainer.classList.remove('focus-mode');
+        if(nodes[nodeAKey]) nodes[nodeAKey].classList.add('selected');
+        if(nodes[nodeBKey]) nodes[nodeBKey].classList.add('selected');
+
+
+        const unitNormal = getUnitNormal(nodeAKey, nodeBKey);
+        const forwardReaction = reactions.find(r => r.start === nodeAKey && r.end === nodeBKey);
+        const reverseReaction = reactions.find(r => r.start === nodeBKey && r.end === nodeAKey);
+
+        if (forwardReaction) {
+            drawArrowAndText(finalPathsContainer, nodeAKey, nodeBKey, 1, unitNormal, forwardReaction, false, isRedraw);
+        }
         if (reverseReaction) {
-            const control = { x: (start.x + end.x) / 2 - unitNormal.x * offset, y: (start.y + end.y) / 2 - unitNormal.y * offset };
-            pathReverse.setAttribute('d', `M ${end.x},${end.y} Q ${control.x},${control.y} ${start.x},${start.y}`);
-            pathReverse.style.opacity = '1';
-
-            const tangentVector = { x: (control.x - end.x) + (start.x - control.x), y: (control.y - end.y) + (start.y - control.y) };
-            let angle = Math.atan2(tangentVector.y, tangentVector.x) * (180 / Math.PI);
-            const midPoint = { x: 0.25 * end.x + 0.5 * control.x + 0.25 * start.x, y: 0.25 * end.y + 0.5 * control.y + 0.25 * start.y };
-            
-            midArrowReverse.setAttribute('d', arrowShape);
-            midArrowReverse.setAttribute('transform', `translate(${midPoint.x}, ${midPoint.y}) rotate(${angle})`);
-            midArrowReverse.style.opacity = '1';
-
-            if (Math.abs(angle) > 90) angle += 180;
-            textReverse.textContent = reverseReaction.details;
-            textReverse.setAttribute('transform', `translate(${midPoint.x}, ${midPoint.y}) rotate(${angle})`);
-            reverseClickHandler = () => showExamplePopup(reverseReaction);
-            textReverse.addEventListener('click', reverseClickHandler);
-            textReverse.style.opacity = '1';
+            drawArrowAndText(finalPathsContainer, nodeBKey, nodeAKey, -1, unitNormal, reverseReaction, false, isRedraw);
         }
 
-        instructionText.textContent = 'Reaction displayed. Click conditions for examples or click anywhere to reset.';
-        reactantNode.classList.remove('selected');
-        Object.values(nodes).forEach(node => node.classList.remove('possible-product'));
-        selectedReactant = null;
+        if (!isRedraw) {
+            instructionText.textContent = 'Reaction displayed. Click anywhere to reset.';
+        }
+    }
+    
+    function getUnitNormal(nodeAKey, nodeBKey) {
+        const nodeA = nodes[nodeAKey];
+        const nodeB = nodes[nodeBKey];
+        if (!nodeA || !nodeB) return {x:0, y:0};
+        const centerA = { x: nodeA.offsetLeft + NODE_RADIUS, y: nodeA.offsetTop + NODE_RADIUS };
+        const centerB = { x: nodeB.offsetLeft + NODE_RADIUS, y: nodeB.offsetTop + NODE_RADIUS };
+        const dx = centerB.x - centerA.x;
+        const dy = centerB.y - centerA.y;
+        const normal = { x: -dy, y: dx };
+        const normLength = Math.sqrt(normal.x * normal.x + normal.y * normal.y);
+        return { x: normLength ? normal.x / normLength : 0, y: normLength ? normal.y / normLength : 0 };
+    }
+
+    function getPointOnCubicBezier(t, p0, p1, p2, p3) {
+        const cX = 3 * (p1.x - p0.x), bX = 3 * (p2.x - p1.x) - cX, aX = p3.x - p0.x - cX - bX;
+        const cY = 3 * (p1.y - p0.y), bY = 3 * (p2.y - p1.y) - cY, aY = p3.y - p0.y - cY - bY;
+        const x = (aX * Math.pow(t, 3)) + (bX * Math.pow(t, 2)) + (cX * t) + p0.x;
+        const y = (aY * Math.pow(t, 3)) + (bY * Math.pow(t, 2)) + (cY * t) + p0.y;
+        return {x: x, y: y};
+    }
+
+    function getTangentOnCubicBezier(t, p0, p1, p2, p3) {
+        const dx = 3 * (1 - t) * (1 - t) * (p1.x - p0.x) + 6 * (1 - t) * t * (p2.x - p1.x) + 3 * t * t * (p3.x - p2.x);
+        const dy = 3 * (1 - t) * (1 - t) * (p1.y - p0.y) + 6 * (1 - t) * t * (p2.y - p1.y) + 3 * t * t * (p3.y - p2.y);
+        return {x: dx, y: dy};
     }
 
     function resetSelection() {
         if (selectedReactant) {
             nodes[selectedReactant].classList.remove('selected');
         }
-        Object.values(nodes).forEach(node => node.classList.remove('possible-product'));
+        Object.values(nodes).forEach(node => {
+            node.classList.remove('selected');
+            node.classList.remove('possible-product');
+        });
         
-        pathForward.style.opacity = '0';
-        pathReverse.style.opacity = '0';
-        midArrowForward.style.opacity = '0';
-        midArrowReverse.style.opacity = '0';
-        textForward.style.opacity = '0';
-        textReverse.style.opacity = '0';
-
-        if (forwardClickHandler) textForward.removeEventListener('click', forwardClickHandler);
-        if (reverseClickHandler) textReverse.removeEventListener('click', reverseClickHandler);
-        forwardClickHandler = null;
-        reverseClickHandler = null;
-
-        hideExamplePopup();
+        finalPathsContainer.innerHTML = '';
+        
+        mapContainer.classList.remove('focus-mode');
+        activePath = null;
         selectedReactant = null;
         instructionText.textContent = 'Select a starting compound.';
+        centerNodeBtn.classList.add('hidden');
     }
 
     function showExamplePopup(reaction) {
@@ -365,38 +858,38 @@
         
         reaction.examples.forEach(ex => {
             const listItem = document.createElement('li');
-            listItem.className = 'flex items-center justify-center text-center border-b pb-4 last:border-b-0';
+            listItem.className = 'flex flex-nowrap items-center justify-center text-center border-b pb-4 last:border-b-0';
             
             const reagentBefore = ex.reagent && ex.reagent.formula.startsWith('+');
             const reagentAfter = ex.reagent && !ex.reagent.formula.startsWith('+');
 
             listItem.innerHTML = `
                 <div class="text-center">
-                    <div class="font-mono p-2">${ex.reactant.formula}</div>
-                    <div class="text-sm text-gray-600">${ex.reactant.name || ''}</div>
+                    <div class="font-mono p-1 text-sm">${ex.reactant.formula}</div>
+                    <div class="text-xs text-gray-600">${ex.reactant.name || ''}</div>
                 </div>
                 
                 ${ex.reagent && reagentBefore ? `
-                <div class="text-center text-2xl mx-1">+</div>
+                <div class="text-center text-xl mx-1">+</div>
                 <div class="text-center">
-                    <div class="font-mono p-2">${ex.reagent.formula.replace('+ ', '')}</div>
+                    <div class="font-mono p-1 text-sm">${ex.reagent.formula.replace('+ ', '')}</div>
                 </div>` : ''}
 
-                <div class="flex flex-col items-center justify-center mx-2">
-                    <div class="text-xs font-semibold text-blue-600">${reaction.conditions.above}</div>
+                <div class="flex flex-col items-center justify-center mx-1">
+                    <div class="text-xs font-semibold" style="color: var(--brand-color);">${reaction.conditions.above}</div>
                     <div class="reaction-arrow"></div>
-                    <div class="text-xs font-semibold text-blue-600">${reaction.conditions.below}</div>
+                    <div class="text-xs font-semibold" style="color: var(--brand-color);">${reaction.conditions.below}</div>
                 </div>
                 
                 <div class="text-center">
-                    <div class="font-mono p-2">${ex.product.formula}</div>
-                    <div class="text-sm text-gray-600">${ex.product.name || ''}</div>
+                    <div class="font-mono p-1 text-sm">${ex.product.formula}</div>
+                    <div class="text-xs text-gray-600">${ex.product.name || ''}</div>
                 </div>
 
                 ${ex.reagent && reagentAfter ? `
-                <div class="text-center text-2xl mx-1">+</div>
+                <div class="text-center text-xl mx-1">+</div>
                 <div class="text-center">
-                    <div class="font-mono p-2">${ex.reagent.formula.replace('+ ', '')}</div>
+                    <div class="font-mono p-1 text-sm">${ex.reagent.formula.replace('+ ', '')}</div>
                 </div>` : ''}
             `;
             exampleList.appendChild(listItem);
@@ -411,11 +904,100 @@
         exampleCard.classList.add('scale-95', 'opacity-0');
     }
 
-    document.body.addEventListener('click', (e) => {
-        if (!e.target.closest('.node') && !e.target.closest('.reaction-text')) {
-            resetSelection();
+    function updateTransform() {
+        mapContainer.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${scale})`;
+        
+        const baseFontSize = 11;
+        const newFontSize = Math.max(baseFontSize / scale, 8); // Set a minimum font size of 8px
+        document.querySelectorAll('.node-label').forEach(label => {
+            label.style.fontSize = `${newFontSize}px`;
+        });
+        
+        document.querySelectorAll('.reaction-text').forEach(text => {
+            text.style.fontSize = `${12 / scale}px`;
+        });
+    }
+
+    function handleWheel(e) {
+        e.preventDefault();
+        const zoomSpeed = 0.1;
+        const delta = e.deltaY > 0 ? -1 : 1;
+        const newScale = scale + delta * zoomSpeed;
+        scale = Math.max(minScale, Math.min(newScale, maxScale));
+        updateTransform();
+    }
+
+    function zoomIn() {
+        scale = Math.min(maxScale, scale * 1.2);
+        updateTransform();
+    }
+
+    function zoomOut() {
+        scale = Math.max(minScale, scale / 1.2);
+        updateTransform();
+    }
+    
+    function increaseSpacing() {
+        currentRadius += 0.5;
+        repositionNodes();
+    }
+
+    function decreaseSpacing() {
+        currentRadius = Math.max(MIN_RADIUS, currentRadius - 0.5);
+        repositionNodes();
+    }
+
+    function resetZoomAndPan() {
+        scale = 1;
+        pan.x = 0;
+        pan.y = 0;
+        updateTransform();
+    }
+
+    function resetLayout() {
+        currentRadius = DEFAULT_RADIUS;
+        repositionNodes();
+        resetZoomAndPan();
+    }
+
+    function onPanStart(e) {
+        if (e.target.closest('.node') || e.target.closest('#controls-container')) {
+            return;
         }
-    });
+        e.preventDefault();
+        isPanning = true;
+        hasPanned = false;
+        const clientX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX;
+        const clientY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
+        panStart.x = clientX;
+        panStart.y = clientY;
+        panStart.panX = pan.x;
+        panStart.panY = pan.y;
+        mapWrapper.classList.add('grabbing');
+    }
+
+    function onPanMove(e) {
+        if (!isPanning) return;
+        e.preventDefault();
+        const clientX = e.type === 'touchmove' ? e.touches[0].clientX : e.clientX;
+        const clientY = e.type === 'touchmove' ? e.touches[0].clientY : e.clientY;
+        
+        const dx = clientX - panStart.x;
+        const dy = clientY - panStart.y;
+
+        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+            hasPanned = true;
+        }
+
+        pan.x = panStart.panX + dx;
+        pan.y = panStart.panY + dy;
+        updateTransform();
+    }
+
+    function onPanEnd() {
+        isPanning = false;
+        mapWrapper.classList.remove('grabbing');
+    }
 
     initializeMap();
     </script>
